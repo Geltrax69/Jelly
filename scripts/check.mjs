@@ -69,6 +69,10 @@ check('skirt + highlight lines', /skirtMat/.test(html) && /hiMat/.test(html));
 check('stir + tilt pointer modes', /dragMode/.test(html) && /disturb\(px/.test(html));
 check('drips', /wDripTimer/.test(html));
 check('sampleWater exposed for surfing + objects', /function sampleWater/.test(html));
+check('fur shader: shells, droop, strand discard, root-to-tip shade',
+  /furMaterial/.test(html) && /transformed\.y -= uGrav/.test(html) && /discard/.test(html) && /mix\(0\.58, 1\.07/.test(html));
+check('fur cache + base-only shadows', /furCache/.test(html) && /castShadow = k === 0/.test(html));
+check('fur density rep ~200-250', /rep = 220/.test(html));
 
 console.log(failures === 0 ? '\nALL CHECKS PASSED' : `\n${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

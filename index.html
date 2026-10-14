@@ -959,6 +959,93 @@ tickers.push((dt, t) => {
   rippleTex.offset.y += dt * 0.005;
 });
 
+/* ============================== plush fur (shells) ============================== */
+
+/* One cached material per (color, shell, len, rep, grav). All fur materials
+ * share one program; per-material values ride in uniforms. */
+const furCache = new Map();
+function furMaterial(color, opts) {
+  const { shell, len, rep, grav } = opts;
+  const key = [color, shell, len, rep, grav].join('|');
+  if (furCache.has(key)) return furCache.get(key);
+  const base = new THREE.Color(color);
+  const sheenColor = base.clone().lerp(new THREE.Color(0xFFF6E0), 0.55);
+  const mat = new THREE.MeshPhysicalMaterial({
+    color: base,
+    roughness: 0.92, metalness: 0,
+    sheen: 0.9, sheenRoughness: 0.6, sheenColor,
+  });
+  mat.defines = { USE_UV: '' };
+  mat.onBeforeCompile = (shader) => {
+    shader.uniforms.uShell = { value: shell };
+    shader.uniforms.uLen = { value: len };
+    shader.uniforms.uRep = { value: rep };
+    shader.uniforms.uGrav = { value: grav };
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nuniform float uShell;\nuniform float uLen;\nuniform float uGrav;\nvarying vec2 vFurUv;')
+      .replace('#include <uv_vertex>', `#include <uv_vertex>
+      vFurUv = uv;
+      {
+        float push = uShell * uLen;
+        transformed += normal * push;
+        transformed.y -= uGrav * uShell * uShell * uLen;
+      }`);
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>
+      uniform float uShell;
+      uniform float uRep;
+      varying vec2 vFurUv;
+      float furHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }`)
+      .replace('#include <map_fragment>', `#include <map_fragment>
+      {
+        vec2 cell = vFurUv * vec2(uRep, uRep * 0.5);
+        vec2 cid = floor(cell);
+        vec2 f = fract(cell);
+        float h1 = furHash(cid);
+        float h2 = furHash(cid + 17.0);
+        float h3 = furHash(cid + 43.0);
+        vec2 center = 0.5 + (vec2(h2, h3) - 0.5) * 0.6;
+        float strandH = 0.4 + 0.6 * h1;
+        float radius = 0.5 * (1.0 - uShell * 0.75);
+        float d = distance(f, center);
+        if (uShell > 0.0) {
+          if (d > radius || uShell > strandH) discard;
+          float shade = mix(0.58, 1.07, pow(uShell, 0.7));
+          float vary = 0.85 + 0.3 * h2;
+          diffuseColor.rgb *= shade * vary;
+        } else {
+          diffuseColor.rgb *= 0.72;
+        }
+      }`);
+  };
+  mat.customProgramCacheKey = () => 'fur-shell';
+  furCache.set(key, mat);
+  return mat;
+}
+
+function ensureUv(geo) {
+  if (geo.attributes.uv) return geo;
+  const n = geo.attributes.position.count;
+  geo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(n * 2), 2));
+  return geo;
+}
+
+/* Build a fur part: base mesh + N shells, all sharing one geometry.
+ * Only the base mesh casts shadows. */
+function makeFur(geometry, color, opts = {}) {
+  const { len = 0.02, rep = 220, grav = 0.6, shells = 10 } = opts;
+  ensureUv(geometry);
+  const group = new THREE.Group();
+  for (let k = 0; k < shells; k++) {
+    const shell = k / shells;
+    const mesh = new THREE.Mesh(geometry, furMaterial(color, { shell, len, rep, grav }));
+    mesh.castShadow = k === 0;
+    mesh.receiveShadow = k === 0;
+    group.add(mesh);
+  }
+  return group;
+}
+
 /* ============================== UI ============================== */
 
 const $ = (id) => document.getElementById(id);
