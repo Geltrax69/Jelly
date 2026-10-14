@@ -102,7 +102,7 @@ check('wings: balance + calm shaka + wrist wiggle',
 check('blink: 4.2s cycle, sine close', /blinkClose/.test(html) && /t % 4\.2/.test(html));
 check('gap stats tracked', /gapRing/.test(html) && /gapMedian/.test(html));
 check('props: pebble sinks, coconut floats (fur), spawn assigned',
-  /spawnProp/.test(html) && /window\.__jelly\.spawn = spawnProp/.test(html) && /state = 'sinking'/.test(html) && /makeFur\(new THREE\.SphereGeometry\(radius/.test(html));
+  /spawnProp/.test(html) && /spawn: spawnProp/.test(html) && /state = 'sinking'/.test(html) && /makeFur\(new THREE\.SphereGeometry\(radius/.test(html));
 check('props: splash on entry + ring effect', /splashAt/.test(html) && /RingGeometry/.test(html));
 check('props: buoyancy, drag, gradient push, wall bounce, roll',
   /floatY/.test(html) && /g\.gx/.test(html) && /wallBounceProp/.test(html) && /_qRoll/.test(html));

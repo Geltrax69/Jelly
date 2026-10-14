@@ -120,6 +120,15 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js';
 
+/* Merge that tolerates mixed indexed / non-indexed inputs: if any input
+ * is non-indexed, all indexed inputs are expanded first. A raw
+ * mergeGeometries call fails (returns null) on mixed indexing. */
+function mergeAll(geos) {
+  const anyNonIndexed = geos.some(g => !g.index);
+  const norm = anyNonIndexed ? geos.map(g => g.index ? g.toNonIndexed() : g) : geos;
+  return BufferGeometryUtils.mergeGeometries(norm);
+}
+
 /* ============================== config ============================== */
 
 const FLAVOURS = {
@@ -480,9 +489,9 @@ function buildFrondGeometry(len, droop, frng) {
     const t = 0.15 + (s / stations) * 0.85;
     const R = curve.getPoint(t);
     const T = curve.getTangent(t).normalize();
-    const width = 0.16 * (1 - t * 0.7);
+    const width = 0.28 * (1 - t * 0.7);
     for (const side of [-1, 1]) {
-      const tip = new THREE.Vector3(R.x + side * width, R.y - 0.035 - 0.03 * t, R.z + 0.10);
+      const tip = new THREE.Vector3(R.x + side * width, R.y - 0.035 - 0.03 * t, R.z + 0.18);
       const b0 = R.clone().addScaledVector(T, -0.03);
       const b1 = R.clone().addScaledVector(T, 0.03);
       leafPos.push(b0.x, b0.y, b0.z, b1.x, b1.y, b1.z, tip.x, tip.y, tip.z);
@@ -496,7 +505,7 @@ function buildFrondGeometry(len, droop, frng) {
   leafGeo.setAttribute('color', new THREE.Float32BufferAttribute(leafCol, 3));
   leafGeo.computeVertexNormals();
   addUvAttr(leafGeo);
-  return BufferGeometryUtils.mergeGeometries([rib, leafGeo]);
+  return mergeAll([rib, leafGeo]);
 }
 
 function buildPalm(x, z, height, seed) {
@@ -548,7 +557,7 @@ function buildPalm(x, z, height, seed) {
     g.applyMatrix4(m);
     fronds.push(g);
   }
-  const crownGeo = BufferGeometryUtils.mergeGeometries(fronds);
+  const crownGeo = mergeAll(fronds);
   const crownMesh = new THREE.Mesh(crownGeo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8, side: THREE.DoubleSide }));
   crownMesh.castShadow = true;
   crown.add(crownMesh);
@@ -712,8 +721,8 @@ function makeRippleNormalMap() {
   }
   for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
     const xm = (x - 1 + S) % S, xp = (x + 1) % S, ym = (y - 1 + S) % S, yp = (y + 1) % S;
-    const dx = (hf[y * S + xp] - hf[y * S + xm]) * 2.0;
-    const dy = (hf[yp * S + x] - hf[ym * S + x]) * 2.0;
+    const dx = (hf[y * S + xp] - hf[y * S + xm]) * 0.8;
+    const dy = (hf[yp * S + x] - hf[ym * S + x]) * 0.8;
     const inv = 1 / Math.sqrt(dx * dx + dy * dy + 1);
     const o = (y * S + x) * 4;
     img.data[o] = (-dx * inv * 0.5 + 0.5) * 255;
@@ -724,7 +733,7 @@ function makeRippleNormalMap() {
   ctx.putImageData(img, 0, 0);
   const tex = new THREE.CanvasTexture(cv);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(6, 6);
+  tex.repeat.set(3, 3);
   return tex;
 }
 
@@ -1048,8 +1057,8 @@ function furMaterial(color, opts) {
     shader.uniforms.uGrav = { value: grav };
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', '#include <common>\nuniform float uShell;\nuniform float uLen;\nuniform float uGrav;\nvarying vec2 vFurUv;')
-      .replace('#include <uv_vertex>', `#include <uv_vertex>
-      vFurUv = uv;
+      .replace('#include <uv_vertex>', '#include <uv_vertex>\n      vFurUv = uv;')
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
       {
         float push = uShell * uLen;
         transformed += normal * push;
@@ -1260,7 +1269,7 @@ const qAxis = (axis, angle) => new THREE.Quaternion().setFromAxisAngle(axis, ang
     baked(g, new THREE.Vector3(bx, by, bz).addScaledVector(dir, 0.05), qFromDir(dir));
     spikes.push(g);
   }
-  const tuft = makeFur(BufferGeometryUtils.mergeGeometries(spikes), PALETTE.orange, { len: 0.02, rep: 200 });
+  const tuft = makeFur(mergeAll(spikes), PALETTE.orange, { len: 0.02, rep: 200 });
   headGroup.add(tuft);
 }
 
@@ -1282,7 +1291,7 @@ const qAxis = (axis, angle) => new THREE.Quaternion().setFromAxisAngle(axis, ang
     baked(lobe, center, q);
     parts.push(lobe);
   }
-  const comb = makeFur(BufferGeometryUtils.mergeGeometries(parts), PALETTE.comb, { len: 0.015, rep: 200, grav: 0.4 });
+  const comb = makeFur(mergeAll(parts), PALETTE.comb, { len: 0.015, rep: 200, grav: 0.4 });
   combMesh = comb;
   headGroup.add(comb);
 }
@@ -1429,8 +1438,8 @@ for (const side of [-1, 1]) {
     baked(g, new THREE.Vector3((k - 2) * 0.04, 0.92, 0.12).addScaledVector(dir, 0.10), qFromDir(dir));
     goldGeos.push(g);
   }
-  const maneGold = makeFur(BufferGeometryUtils.mergeGeometries(goldGeos), PALETTE.gold, { len: 0.03, grav: 1.0, rep: 200 });
-  const maneOrange = makeFur(BufferGeometryUtils.mergeGeometries(orangeGeos), PALETTE.orange, { len: 0.03, grav: 1.0, rep: 200 });
+  const maneGold = makeFur(mergeAll(goldGeos), PALETTE.gold, { len: 0.03, grav: 1.0, rep: 200 });
+  const maneOrange = makeFur(mergeAll(orangeGeos), PALETTE.orange, { len: 0.03, grav: 1.0, rep: 200 });
   bodyGroup.add(maneGold);
   bodyGroup.add(maneOrange);
 }
@@ -1465,7 +1474,7 @@ function buildWing(side) {
     baked(g, tip.clone().addScaledVector(dir, 0.06), qFromDir(dir));
     fingers.push(g);
   }
-  const hand = makeFur(BufferGeometryUtils.mergeGeometries(fingers), PALETTE.wingtip, { len: 0.015, rep: 200 });
+  const hand = makeFur(mergeAll(fingers), PALETTE.wingtip, { len: 0.015, rep: 200 });
   shoulder.add(hand);
   bodyGroup.add(shoulder);
   wingRest[side < 0 ? 'left' : 'right'] = { group: shoulder, rot: shoulder.rotation.clone() };
@@ -1492,7 +1501,7 @@ bodyGroup.add(tailGroup);
     baked(g, dir.clone().multiplyScalar(0.08), qFromDir(dir));
     spikes.push(g);
   }
-  const tuft = makeFur(BufferGeometryUtils.mergeGeometries(spikes), PALETTE.wingtip, { len: 0.02, rep: 200 });
+  const tuft = makeFur(mergeAll(spikes), PALETTE.wingtip, { len: 0.02, rep: 200 });
   tailGroup.add(tuft);
 }
 
@@ -1719,7 +1728,7 @@ function spawnProp(kind) {
   diorama.add(mesh);
   props.push({ kind, mesh, state: 'air', x, y: 2.5, z, vx: 0, vy: 0, vz: 0, radius });
 }
-window.__jelly.spawn = spawnProp;
+/* spawn is wired into window.__jelly in the UI section (which defines it). */
 
 function wallBounceProp(p, bounce) {
   const lim = 4.85 - p.radius;
@@ -1888,8 +1897,8 @@ try {
 /* ============================== debug handle ============================== */
 
 window.__jelly = {
-  params, state, scene, camera, diorama, THREE,
-  spawn: null, /* filled by the objects slice */
+  params, state, scene, camera, controls, diorama, THREE,
+  spawn: spawnProp, /* from the objects slice */
   getGapStats: () => ({ median: state.gapMedian, max: state.gapMax }),
 };
 
