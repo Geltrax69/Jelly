@@ -1158,6 +1158,276 @@ for (const side of [-1, 1]) {
   bodyGroup.add(neck);
 }
 
+/* ============================== Joe: head ============================== */
+
+/* headGroup pivots at the neck top so the head can nod, cock and look. */
+const headGroup = new THREE.Group();
+headGroup.position.set(0, 1.33, 0.13);
+bodyGroup.add(headGroup);
+
+const dummyObj = new THREE.Object3D();
+function baked(geo, pos, quat) {
+  dummyObj.position.copy(pos);
+  dummyObj.quaternion.copy(quat || new THREE.Quaternion());
+  dummyObj.updateMatrix();
+  geo.applyMatrix4(dummyObj.matrix);
+  return geo;
+}
+const qFromDir = (dir) => new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().normalize());
+const qAxis = (axis, angle) => new THREE.Quaternion().setFromAxisAngle(axis, angle);
+
+/* ---- head sphere + back tuft ---- */
+{
+  const head = makeFur(new THREE.SphereGeometry(0.15, 24, 18), PALETTE.orange, { len: 0.03, rep: 220 });
+  head.position.set(0, 0.05, 0.01);
+  headGroup.add(head);
+}
+{
+  const spikes = [];
+  for (const [bx, by, bz, dx, dy, dz] of [
+    [0.03, 0.13, -0.12, 0.2, 0.5, -1], [-0.03, 0.13, -0.12, -0.2, 0.5, -1],
+    [0.06, 0.10, -0.13, 0.45, 0.4, -1], [-0.06, 0.10, -0.13, -0.45, 0.4, -1],
+  ]) {
+    const dir = new THREE.Vector3(dx, dy, dz).normalize();
+    const g = new THREE.ConeGeometry(0.028, 0.12, 6);
+    baked(g, new THREE.Vector3(bx, by, bz).addScaledVector(dir, 0.05), qFromDir(dir));
+    spikes.push(g);
+  }
+  const tuft = makeFur(BufferGeometryUtils.mergeGeometries(spikes), PALETTE.orange, { len: 0.02, rep: 200 });
+  headGroup.add(tuft);
+}
+
+/* ---- comb: red base blade + 5 fanned capsule lobes, merged, velvet fur ---- */
+{
+  const parts = [];
+  const blade = new THREE.BoxGeometry(0.025, 0.04, 0.30);
+  baked(blade, new THREE.Vector3(0, 0.18, -0.03), null);
+  parts.push(blade);
+  const heights = [0.10, 0.14, 0.16, 0.13, 0.09];
+  for (let i = 0; i < 5; i++) {
+    const a = 0.85 - i * (1.7 / 4);
+    const dir = new THREE.Vector3(0, Math.cos(a), Math.sin(a));
+    const base = new THREE.Vector3(0, 0.17 + 0.02 * Math.cos(a), -0.03 + 0.12 * Math.sin(a));
+    const center = base.clone().addScaledVector(dir, heights[i] / 2);
+    const flop = (i % 2 ? 0.12 : -0.12);
+    const q = qAxis(new THREE.Vector3(0, 0, 1), flop).multiply(qFromDir(dir));
+    const lobe = new THREE.CapsuleGeometry(0.035, heights[i], 4, 10);
+    baked(lobe, center, q);
+    parts.push(lobe);
+  }
+  const comb = makeFur(BufferGeometryUtils.mergeGeometries(parts), PALETTE.comb, { len: 0.015, rep: 200, grav: 0.4 });
+  headGroup.add(comb);
+}
+
+/* ---- eyes: bulging white, heavy felt lids, lower lids, pupils ---- */
+const eyeMat = new THREE.MeshPhysicalMaterial({ color: 0xFFFFFF, roughness: 0.12, clearcoat: 1, clearcoatRoughness: 0.1 });
+const lidMat = new THREE.MeshStandardMaterial({ color: PALETTE.orange, roughness: 0.95 });
+const lidRimMat = new THREE.MeshStandardMaterial({ color: 0xC97A1E, roughness: 0.9 });
+const pupilMat = new THREE.MeshPhysicalMaterial({ color: 0x1A1512, roughness: 0.25, clearcoat: 1 });
+const eyeGroups = [];
+const lidGroups = [];
+function buildEye(side) {
+  const g = new THREE.Group();
+  g.position.set(0.07 * side, 0.135, 0.14);
+  g.rotation.y = -0.15 * side; // slightly turned outward
+  const white = new THREE.Mesh(new THREE.SphereGeometry(0.075, 24, 18), eyeMat);
+  g.add(white);
+  // Heavy upper lid: felt cap covering ~56%, edge just below the eye centre.
+  const lid = new THREE.Group();
+  lid.rotation.x = side < 0 ? 0.15 : 0.28; // right lid droopier
+  const theta = side < 0 ? 1.76 : 1.80;
+  const cap = new THREE.Mesh(new THREE.SphereGeometry(0.078, 24, 12, 0, Math.PI * 2, 0, theta), lidMat);
+  lid.add(cap);
+  const rimR = 0.078 * Math.sin(theta), rimY = 0.078 * Math.cos(theta);
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(rimR, 0.004, 8, 32), lidRimMat);
+  rim.rotation.x = Math.PI / 2;
+  rim.position.y = rimY;
+  lid.add(rim);
+  g.add(lid);
+  lidGroups.push(lid);
+  // Lower lid pushed up from below, like cheeks from smiling.
+  const lower = new THREE.Mesh(new THREE.SphereGeometry(0.078, 24, 12, 0, Math.PI * 2, Math.PI - 0.5, 0.5), lidMat);
+  lower.position.y = 0.005;
+  g.add(lower);
+  // Pupil + highlight in the visible white band.
+  const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.022, 16, 12), pupilMat);
+  pupil.position.set(0, -0.008, 0.070);
+  g.add(pupil);
+  const hi = new THREE.Mesh(new THREE.SphereGeometry(0.005, 8, 8), new THREE.MeshBasicMaterial({ color: 0xFFFFFF }));
+  hi.position.set(0.007, 0.002, 0.086);
+  g.add(hi);
+  headGroup.add(g);
+  eyeGroups.push(g);
+  return g;
+}
+buildEye(-1);
+buildEye(1);
+
+/* ---- beak: wide flattened cone, hook bend, hinged lower beak ---- */
+function buildBeakGeo(radius, length, widen, flatten, hook) {
+  const geo = new THREE.ConeGeometry(radius, length, 14);
+  geo.rotateX(Math.PI / 2);
+  geo.translate(0, 0, length / 2);
+  const pos = geo.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const t = Math.max(0, pos.getZ(i) / length);
+    pos.setX(i, pos.getX(i) * widen);
+    pos.setY(i, pos.getY(i) * flatten - hook * Math.pow(t, 2.4));
+  }
+  geo.computeVertexNormals();
+  return geo;
+}
+const beakMat = new THREE.MeshStandardMaterial({ color: PALETTE.beak, roughness: 0.8 });
+{
+  const upper = new THREE.Mesh(buildBeakGeo(0.06, 0.28, 1.4, 0.7, 0.05), beakMat);
+  upper.position.set(0, -0.01, 0.11);
+  upper.castShadow = true;
+  headGroup.add(upper);
+}
+const jawGroup = new THREE.Group();
+jawGroup.position.set(0, -0.05, 0.09);
+jawGroup.rotation.x = 0.42; // hinged open
+headGroup.add(jawGroup);
+{
+  const lower = new THREE.Mesh(buildBeakGeo(0.045, 0.18, 1.3, 0.75, 0.03), beakMat);
+  lower.castShadow = true;
+  jawGroup.add(lower);
+  const tongue = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 10), new THREE.MeshStandardMaterial({ color: 0xF28BA8, roughness: 0.6 }));
+  tongue.scale.set(0.035, 0.012, 0.075);
+  tongue.position.set(0, 0.015, 0.07);
+  jawGroup.add(tongue);
+}
+{
+  const mouth = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 10), new THREE.MeshStandardMaterial({ color: 0x7A1A1A, roughness: 0.6 }));
+  mouth.scale.set(0.055, 0.018, 0.10);
+  mouth.position.set(0, -0.02, 0.15);
+  headGroup.add(mouth);
+}
+/* Cheek puffs at the mouth corners. */
+for (const side of [-1, 1]) {
+  const geo = new THREE.SphereGeometry(1, 14, 10);
+  geo.scale(0.05, 0.04, 0.04);
+  const puff = makeFur(geo, PALETTE.rust, { len: 0.02, rep: 200 });
+  puff.position.set(0.11 * side, -0.02, 0.13);
+  headGroup.add(puff);
+}
+/* Wattles hanging under the beak, each on its own flop pivot. */
+const wattles = [];
+for (const side of [-1, 1]) {
+  const pivot = new THREE.Group();
+  pivot.position.set(0.045 * side, -0.07, 0.17);
+  pivot.rotation.x = 0.15;
+  const geo = new THREE.CapsuleGeometry(0.022, 0.07, 4, 8);
+  const wattle = makeFur(geo, PALETTE.comb, { len: 0.015, rep: 200, grav: 0.4 });
+  wattle.position.y = -0.045;
+  pivot.add(wattle);
+  headGroup.add(pivot);
+  wattles.push(pivot);
+}
+
+/* ============================== Joe: mane, wings, tail ============================== */
+
+/* Mane: 6 rings of thin fuzzy cones pointing down and out, longer at the
+ * bottom, plus a shaggy bib onto the chest. Merged into gold + orange. */
+{
+  const neckCurve = new THREE.CatmullRomCurve3([
+    new THREE.Vector3(0, 0.90, -0.05),
+    new THREE.Vector3(0, 1.05, -0.02),
+    new THREE.Vector3(0, 1.20, 0.05),
+    new THREE.Vector3(0, 1.33, 0.13),
+  ]);
+  const goldGeos = [], orangeGeos = [];
+  const ringY = [0.95, 1.03, 1.11, 1.19, 1.27, 1.33];
+  for (let r = 0; r < ringY.length; r++) {
+    const y = ringY[r];
+    const t = (y - 0.90) / 0.43;
+    const center = neckCurve.getPoint(Math.min(1, Math.max(0, t)));
+    const len = 0.10 + (1.33 - y) * 0.35;
+    const n = 7;
+    for (let k = 0; k < n; k++) {
+      const a = (k / n) * Math.PI * 2 + r * 0.4;
+      const radial = new THREE.Vector3(Math.cos(a), 0, Math.sin(a));
+      const dir = radial.clone().multiplyScalar(0.8).add(new THREE.Vector3(0, -0.6, 0)).normalize();
+      const g = new THREE.ConeGeometry(0.022, len, 6);
+      const base = center.clone().addScaledVector(radial, 0.05);
+      baked(g, base.clone().addScaledVector(dir, len / 2 - 0.03), qFromDir(dir));
+      (r % 2 === 0 ? goldGeos : orangeGeos).push(g);
+    }
+  }
+  // Bib: longer cones down the front onto the chest.
+  for (let k = 0; k < 5; k++) {
+    const dir = new THREE.Vector3((k - 2) * 0.12, -0.85, 0.45).normalize();
+    const g = new THREE.ConeGeometry(0.024, 0.26, 6);
+    baked(g, new THREE.Vector3((k - 2) * 0.04, 0.92, 0.12).addScaledVector(dir, 0.10), qFromDir(dir));
+    goldGeos.push(g);
+  }
+  const maneGold = makeFur(BufferGeometryUtils.mergeGeometries(goldGeos), PALETTE.gold, { len: 0.03, grav: 1.0, rep: 200 });
+  const maneOrange = makeFur(BufferGeometryUtils.mergeGeometries(orangeGeos), PALETTE.orange, { len: 0.03, grav: 1.0, rep: 200 });
+  bodyGroup.add(maneGold);
+  bodyGroup.add(maneOrange);
+}
+
+/* Wings held like loose arms. Shoulder pivots use rotation order ZYX. */
+const wingRest = {};
+function buildWing(side) {
+  const shoulder = new THREE.Group();
+  shoulder.position.set(0.28 * side, 1.02, -0.02);
+  shoulder.rotation.order = 'ZYX';
+  shoulder.rotation.set(0, 0.15, -0.35 * side);
+  // Flattened orange forearm.
+  const foreGeo = new THREE.SphereGeometry(1, 20, 14);
+  foreGeo.scale(0.16, 0.05, 0.10);
+  const fore = makeFur(foreGeo, PALETTE.orange, { len: 0.025, rep: 200 });
+  fore.position.set(0.12 * side, -0.02, 0.02);
+  shoulder.add(fore);
+  // Rust mid-section.
+  const midGeo = new THREE.SphereGeometry(1, 18, 12);
+  midGeo.scale(0.10, 0.045, 0.08);
+  const mid = makeFur(midGeo, PALETTE.rust, { len: 0.025, rep: 200 });
+  mid.position.set(0.24 * side, -0.04, 0.04);
+  shoulder.add(mid);
+  // 5 dark finger feathers fanned at the tip, merged into one fur part.
+  const fingers = [];
+  for (let k = 0; k < 5; k++) {
+    const yaw = (k - 2) * 0.22;
+    const dir = new THREE.Vector3(side * Math.cos(yaw), -0.15, Math.sin(yaw)).normalize();
+    const g = new THREE.CapsuleGeometry(0.018, 0.10, 4, 8);
+    g.scale(1, 1, 0.5);
+    const tip = new THREE.Vector3(0.32 * side, -0.05, 0.05);
+    baked(g, tip.clone().addScaledVector(dir, 0.06), qFromDir(dir));
+    fingers.push(g);
+  }
+  const hand = makeFur(BufferGeometryUtils.mergeGeometries(fingers), PALETTE.wingtip, { len: 0.015, rep: 200 });
+  shoulder.add(hand);
+  bodyGroup.add(shoulder);
+  wingRest[side < 0 ? 'left' : 'right'] = { group: shoulder, rot: shoulder.rotation.clone() };
+  return shoulder;
+}
+const wingL = buildWing(-1);
+const wingR = buildWing(1);
+
+/* Tail: dark scruffy spikes on an orange fluffy base, angled up and back. */
+const tailGroup = new THREE.Group();
+tailGroup.position.set(0, 0.95, -0.28);
+bodyGroup.add(tailGroup);
+{
+  const baseGeo = new THREE.SphereGeometry(1, 16, 12);
+  baseGeo.scale(0.12, 0.10, 0.10);
+  const base = makeFur(baseGeo, PALETTE.orange, { len: 0.03, rep: 200 });
+  base.position.set(0, 0, -0.02);
+  tailGroup.add(base);
+  const spikes = [];
+  for (let k = 0; k < 5; k++) {
+    const yaw = (k - 2) * 0.22;
+    const dir = new THREE.Vector3(Math.sin(yaw) * 0.5, 0.75, -0.65).normalize();
+    const g = new THREE.ConeGeometry(0.028, 0.16, 6);
+    baked(g, dir.clone().multiplyScalar(0.08), qFromDir(dir));
+    spikes.push(g);
+  }
+  const tuft = makeFur(BufferGeometryUtils.mergeGeometries(spikes), PALETTE.wingtip, { len: 0.02, rep: 200 });
+  tailGroup.add(tuft);
+}
+
 /* ============================== UI ============================== */
 
 const $ = (id) => document.getElementById(id);

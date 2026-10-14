@@ -80,6 +80,15 @@ check('surfboard: flattened sphere + coral stripe + fin',
 check('legs: felt tube + knee + 4 splayed toes', /buildLeg/.test(html) && /CapsuleGeometry\(0\.016, 0\.14/.test(html));
 check('slouch: shorts + torso + belly + neck',
   /makeFur\(shortsGeo/.test(html) && /makeFur\(torsoGeo/.test(html) && /makeFur\(bellyGeo/.test(html) && /neckCurve/.test(html));
+check('head: sphere + tuft + comb (blade + 5 lobes)',
+  /headGroup/.test(html) && /CapsuleGeometry\(0\.035/.test(html) && /heights = \[0\.10, 0\.14, 0\.16, 0\.13, 0\.09\]/.test(html));
+check('eyes: bulging white, heavy lids 56%, rim, lower lid, pupil + highlight',
+  /buildEye/.test(html) && /1\.76/.test(html) && /TorusGeometry/.test(html) && /Math\.PI - 0\.5/.test(html) && /pupil/.test(html));
+check('beak: deformed cone, hook bend, hinged lower beak, tongue, wattles',
+  /buildBeakGeo/.test(html) && /Math\.pow\(t, 2\.4\)/.test(html) && /jawGroup/.test(html) && /tongue/.test(html) && /wattles/.test(html));
+check('mane: 6 rings, gold + orange merged', /ringY = \[0\.95/.test(html) && /maneGold/.test(html) && /maneOrange/.test(html));
+check('wings: ZYX shoulders, forearm + mid + 5 merged fingers', /buildWing/.test(html) && /rotation\.order = 'ZYX'/.test(html));
+check('tail: orange base + dark spikes', /tailGroup/.test(html));
 
 console.log(failures === 0 ? '\nALL CHECKS PASSED' : `\n${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);
