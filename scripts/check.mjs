@@ -89,6 +89,18 @@ check('beak: deformed cone, hook bend, hinged lower beak, tongue, wattles',
 check('mane: 6 rings, gold + orange merged', /ringY = \[0\.95/.test(html) && /maneGold/.test(html) && /maneOrange/.test(html));
 check('wings: ZYX shoulders, forearm + mid + 5 merged fingers', /buildWing/.test(html) && /rotation\.order = 'ZYX'/.test(html));
 check('tail: orange base + dark spikes', /tailGroup/.test(html));
+check('surfing: orbit + gradient + repulsion + wall bounce + speed cap',
+  /desVx/.test(html) && /samp\.gx/.test(html) && /terr > params\.tide/.test(html) && /sp > 1\.2/.test(html));
+check('surfing vertical: footprint average, spring, glue, gravity, clamps',
+  /surfHAt/.test(html) && /surfH \+ 0\.01/.test(html) && /9\.8 \* 1\.8/.test(html) && /newGap < -0\.04/.test(html) && /newGap > 0\.16/.test(html));
+check('board orientation: yaw + normal + lean',
+  /_qNormal/.test(html) && /surf\.lean/.test(html) && /slerp/.test(html));
+check('groove: beat sway, nod, cock, look, wattle flop, jaw breathe, tail',
+  /beat = t \* 2\.4/.test(html) && /headGroup\.rotation\.z = 0\.14/.test(html) && /jawGroup\.rotation\.x = 0\.42/.test(html));
+check('wings: balance + calm shaka + wrist wiggle',
+  /shaka = calm/.test(html) && /wingR\.rotation\.y/.test(html) && /Math\.sin\(t \* 1\.5\)/.test(html));
+check('blink: 4.2s cycle, sine close', /blinkClose/.test(html) && /t % 4\.2/.test(html));
+check('gap stats tracked', /gapRing/.test(html) && /gapMedian/.test(html));
 
 console.log(failures === 0 ? '\nALL CHECKS PASSED' : `\n${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

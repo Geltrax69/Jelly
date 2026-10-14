@@ -1160,6 +1160,8 @@ for (const side of [-1, 1]) {
 
 /* ============================== Joe: head ============================== */
 
+let combMesh = null; // set below; flops with a phase lag after the head
+
 /* headGroup pivots at the neck top so the head can nod, cock and look. */
 const headGroup = new THREE.Group();
 headGroup.position.set(0, 1.33, 0.13);
@@ -1216,6 +1218,7 @@ const qAxis = (axis, angle) => new THREE.Quaternion().setFromAxisAngle(axis, ang
     parts.push(lobe);
   }
   const comb = makeFur(BufferGeometryUtils.mergeGeometries(parts), PALETTE.comb, { len: 0.015, rep: 200, grav: 0.4 });
+  combMesh = comb;
   headGroup.add(comb);
 }
 
@@ -1427,6 +1430,183 @@ bodyGroup.add(tailGroup);
   const tuft = makeFur(BufferGeometryUtils.mergeGeometries(spikes), PALETTE.wingtip, { len: 0.02, rep: 200 });
   tailGroup.add(tuft);
 }
+
+/* ============================== Joe: surfing + groove ============================== */
+
+const surf = {
+  x: 0, z: 3.4, y: 0, vy: 0,
+  vx: 0.5, vz: 0,
+  heading: 0,
+  airborne: false,
+  lean: 0,
+  prevVx: 0.5, prevVz: 0,
+  wakeTimer: 0,
+  surfNormal: new THREE.Vector3(0, 1, 0),
+  svyS: 0, prevSurfH: 0,
+  gapRing: [],
+};
+for (const lid of lidGroups) lid.userData.restX = lid.rotation.x;
+
+const _qYaw = new THREE.Quaternion();
+const _qNormal = new THREE.Quaternion();
+const _qLean = new THREE.Quaternion();
+const _qTarget = new THREE.Quaternion();
+const _up = new THREE.Vector3(0, 1, 0);
+const _fwd = new THREE.Vector3();
+const _nrm = new THREE.Vector3();
+
+function surfHAt(x, z, heading) {
+  const fx = Math.sin(heading), fz = Math.cos(heading);
+  const rx = Math.cos(heading), rz = -Math.sin(heading);
+  const hC = sampleWater(x, z).h;
+  const hF = sampleWater(x + fx * 0.55, z + fz * 0.55).h;
+  const hB = sampleWater(x - fx * 0.55, z - fz * 0.55).h;
+  const hL = sampleWater(x + rx * 0.22, z + rz * 0.22).h;
+  const hR = sampleWater(x - rx * 0.22, z - rz * 0.22).h;
+  return (2 * hC + hF + hB + hL + hR) / 6;
+}
+
+function blinkClose(t) {
+  const cycle = t % 4.2;
+  if (cycle < 0.5) return Math.sin((cycle / 0.5) * Math.PI / 2);
+  if (cycle < 0.7) return 1;
+  if (cycle < 1.2) return Math.cos(((cycle - 0.7) / 0.5) * Math.PI / 2);
+  return 0;
+}
+
+tickers.push((dt, t) => {
+  /* ---------- surfing physics (diorama-local) ---------- */
+  const speed = Math.hypot(surf.vx, surf.vz);
+  // Orbit steering: tangential flow + radial correction to radius 3.6.
+  const r = Math.hypot(surf.x, surf.z) || 1e-4;
+  const nx = surf.x / r, nz = surf.z / r;
+  const tx = -nz, tz = nx; // tangential
+  const desVx = tx * 0.5 + nx * (3.6 - r) * 0.3;
+  const desVz = tz * 0.5 + nz * (3.6 - r) * 0.3;
+  surf.vx += (desVx - surf.vx) * Math.min(1, dt * 0.6);
+  surf.vz += (desVz - surf.vz) * Math.min(1, dt * 0.6);
+  // Pushed downhill by the wave gradient.
+  const samp = sampleWater(surf.x, surf.z);
+  surf.vx += -samp.gx * 0.8 * dt;
+  surf.vz += -samp.gz * 0.8 * dt;
+  // Repelled from the island.
+  const terr = terrainHeight(surf.x, surf.z);
+  if (terr > params.tide) {
+    const push = 2.0 + (terr - params.tide) * 4.0;
+    surf.vx += nx * push * dt;
+    surf.vz += nz * push * dt;
+  }
+  // Soft bounce off the walls.
+  if (surf.x > 4.6) { surf.x = 4.6; surf.vx = -Math.abs(surf.vx) * 0.4; }
+  if (surf.x < -4.6) { surf.x = -4.6; surf.vx = Math.abs(surf.vx) * 0.4; }
+  if (surf.z > 4.6) { surf.z = 4.6; surf.vz = -Math.abs(surf.vz) * 0.4; }
+  if (surf.z < -4.6) { surf.z = -4.6; surf.vz = Math.abs(surf.vz) * 0.4; }
+  // Speed cap.
+  const sp = Math.hypot(surf.vx, surf.vz);
+  if (sp > 1.2) { surf.vx *= 1.2 / sp; surf.vz *= 1.2 / sp; }
+  surf.x += surf.vx * dt;
+  surf.z += surf.vz * dt;
+
+  // Vertical: ride the footprint-averaged surface.
+  const surfH = surfHAt(surf.x, surf.z, surf.heading);
+  const svy = dt > 0 ? (surfH - surf.prevSurfH) / dt : 0;
+  surf.prevSurfH = surfH;
+  surf.svyS += (svy - surf.svyS) * Math.min(1, dt * 8);
+  const gap = surf.y - surfH;
+  if (!surf.airborne) {
+    surf.vy += (surfH + 0.01 - surf.y) * 60 * dt; // firm spring to 0.01 above
+    surf.vy += (surf.svyS - surf.vy) * Math.min(1, dt * 6); // ease toward surface speed
+    if (gap > 0.01 && surf.svyS < 0) surf.vy += surf.svyS * 2 * dt; // glue to a dropping face
+  } else {
+    surf.vy -= 9.8 * 1.8 * dt; // gravity x1.8 in the air
+  }
+  if (surf.vy > 2.2) surf.vy = 2.2;
+  surf.y += surf.vy * dt;
+  const newGap = surf.y - surfH;
+  if (newGap < -0.04) { surf.y = surfH - 0.04; if (surf.vy < surf.svyS) surf.vy = surf.svyS; }
+  if (newGap > 0.16) { surf.y = surfH + 0.16; if (surf.vy > 0) surf.vy = 0; }
+  if (!surf.airborne && newGap > 0.08) surf.airborne = true;
+  if (surf.airborne && newGap <= 0.02) {
+    surf.airborne = false;
+    if (surf.vy < -1.2) disturb(surf.x, surf.z, 0.5, 0.08, 0.15); // hard-landing splash
+  }
+
+  // Gap stats: median + max over the last 2 seconds.
+  surf.gapRing.push(surf.y - surfH);
+  if (surf.gapRing.length > 120) surf.gapRing.shift();
+  const sorted = [...surf.gapRing].sort((a, b) => a - b);
+  state.gapMedian = sorted.length ? sorted[Math.floor(sorted.length / 2)] : 0;
+  state.gapMax = sorted.length ? sorted[sorted.length - 1] : 0;
+
+  // Wake: small negative disturbances behind him.
+  surf.wakeTimer -= dt;
+  if (surf.wakeTimer <= 0) {
+    surf.wakeTimer = 0.1;
+    if (sp > 0.25 && !surf.airborne) {
+      disturb(surf.x - Math.sin(surf.heading) * 0.55, surf.z - Math.cos(surf.heading) * 0.55, 0.35, -0.02, -0.02);
+    }
+  }
+
+  // Board orientation: yaw toward travel, tilt to smoothed normal, lean from lateral accel.
+  if (sp > 0.1) {
+    const desired = Math.atan2(surf.vx, surf.vz);
+    let dh = desired - surf.heading;
+    while (dh > Math.PI) dh -= Math.PI * 2;
+    while (dh < -Math.PI) dh += Math.PI * 2;
+    surf.heading += dh * Math.min(1, dt * 3);
+  }
+  _nrm.set(-samp.gx, 1, -samp.gz).normalize();
+  surf.surfNormal.lerp(_nrm, Math.min(1, dt * 5)).normalize();
+  const ax = (surf.vx - surf.prevVx) / Math.max(dt, 1e-4);
+  const az = (surf.vz - surf.prevVz) / Math.max(dt, 1e-4);
+  surf.prevVx = surf.vx; surf.prevVz = surf.vz;
+  const rx = Math.cos(surf.heading), rz = -Math.sin(surf.heading);
+  const lat = ax * rx + az * rz;
+  const leanTarget = THREE.MathUtils.clamp(-lat * 0.12, -0.45, 0.45);
+  surf.lean += (leanTarget - surf.lean) * Math.min(1, dt * 4);
+
+  surfer.position.set(surf.x, surf.y, surf.z);
+  _qYaw.setFromAxisAngle(_up, surf.heading);
+  _qNormal.setFromUnitVectors(_up, surf.surfNormal);
+  _fwd.set(Math.sin(surf.heading), 0, Math.cos(surf.heading));
+  _qLean.setFromAxisAngle(_fwd, surf.lean);
+  _qTarget.copy(_qLean).multiply(_qNormal).multiply(_qYaw);
+  boardTilt.quaternion.slerp(_qTarget, Math.min(1, dt * 6));
+
+  /* ---------- groove (beat = t * 2.4) ---------- */
+  const beat = t * 2.4;
+  const calm = state.calm;
+  const energy = state.waveEnergyS;
+  bodyGroup.rotation.z = Math.sin(beat * Math.PI) * 0.045;
+  bodyGroup.rotation.x = Math.sin(beat * Math.PI * 0.5 + 0.3) * 0.02;
+  headGroup.rotation.x = Math.sin(beat * Math.PI - 0.6) * (0.03 + 0.05 * calm);
+  headGroup.rotation.y = Math.sin(t * 0.33) * 0.25;
+  headGroup.rotation.z = 0.14 + Math.sin(t * 0.5) * 0.06;
+  if (combMesh) {
+    combMesh.rotation.x = Math.sin(beat * Math.PI - 1.2) * 0.04;
+    combMesh.rotation.z = Math.sin(beat * Math.PI - 1.2 + 0.5) * 0.02;
+  }
+  wattles.forEach((w, i) => {
+    w.rotation.x = 0.15 + Math.sin(beat * Math.PI - 1.2 + i * 0.4) * 0.12;
+    w.rotation.z = Math.sin(beat * Math.PI - 1.0 + i * 0.5) * 0.10;
+  });
+  jawGroup.rotation.x = 0.42 + Math.sin(t * 1.2) * 0.03 + Math.sin(beat * Math.PI) * 0.01;
+  tailGroup.rotation.x = Math.sin(t * 0.9) * 0.08;
+  tailGroup.rotation.z = Math.sin(t * 0.7 + 1) * 0.06;
+  // Wings: balance on rough water, shaka on calm water.
+  const shaka = calm;
+  const lift = THREE.MathUtils.clamp(energy * 0.25, 0, 0.4);
+  const balance = -surf.lean * 0.4;
+  wingR.rotation.y = wingRest.right.rot.y + (0.9 - wingRest.right.rot.y) * shaka;
+  wingR.rotation.z = wingRest.right.rot.z * (1 - lift) + (-0.1 - wingRest.right.rot.z) * shaka + balance;
+  wingR.rotation.x = shaka * Math.sin(t * 1.5) * 0.15;
+  wingL.rotation.y = wingRest.left.rot.y;
+  wingL.rotation.z = wingRest.left.rot.z * (1 - lift) + balance;
+  wingL.rotation.x = 0;
+  // Blink: slow, sleepy, every ~4.2 s, sine close over ~0.5 s.
+  const close = blinkClose(t);
+  for (const lid of lidGroups) lid.rotation.x = lid.userData.restX + close * 0.85;
+});
 
 /* ============================== UI ============================== */
 
