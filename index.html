@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Island Jelly — a material study</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root { --paper: #E8E5DC; --ink: #2B2620; --muted: #7A7264; --line: rgba(43,38,32,.22); --water: #35C8CC; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body { background: var(--paper); color: var(--ink); font-family: Inter, system-ui, sans-serif; overflow: hidden; }
+  #scene { position: fixed; inset: 0; }
+  #scene canvas { display: block; }
+
+  .title { position: fixed; top: 22px; left: 26px; z-index: 10; pointer-events: none; max-width: 430px; }
+  .eyebrow { font-size: 10px; letter-spacing: .32em; font-weight: 600; color: var(--muted); }
+  h1 { font-family: "Instrument Serif", serif; font-style: italic; font-weight: 400; font-size: clamp(40px, 5.4vw, 64px); line-height: .95; margin: 8px 0 12px; }
+  .rule { width: 100%; height: 1px; background: var(--line); margin-bottom: 10px; }
+  .subtitle { font-size: 13px; line-height: 1.55; color: #4A443A; max-width: 380px; }
+
+  .pill { position: fixed; top: 24px; right: 24px; z-index: 10; font-size: 11px; font-weight: 500; letter-spacing: .04em; padding: 7px 12px; border-radius: 999px; background: rgba(255,255,255,.55); border: 1px solid rgba(43,38,32,.14); backdrop-filter: blur(8px); }
+
+  .panel { position: fixed; top: 64px; right: 24px; z-index: 10; width: 200px; padding: 14px 14px 12px; border-radius: 16px; background: rgba(255,255,255,.5); border: 1px solid rgba(43,38,32,.12); backdrop-filter: blur(14px); box-shadow: 0 12px 32px rgba(43,38,32,.10); }
+  .panel h2 { font-family: "Instrument Serif", serif; font-style: italic; font-weight: 400; font-size: 20px; margin: 2px 0 10px; }
+  .panel h3 { font-size: 10px; letter-spacing: .18em; font-weight: 600; color: var(--muted); margin: 14px 0 8px; text-transform: uppercase; }
+  .panel h3:first-of-type { margin-top: 0; }
+  .btn { width: 100%; display: block; padding: 8px 10px; margin-bottom: 6px; font-family: Inter, sans-serif; font-size: 12px; font-weight: 600; color: var(--ink); background: rgba(255,255,255,.75); border: 1px solid rgba(43,38,32,.16); border-radius: 10px; cursor: pointer; transition: background .15s, transform .1s; }
+  .btn:hover { background: #fff; }
+  .btn:active { transform: scale(.98); }
+  .btn-row { display: flex; gap: 6px; }
+  .btn-row .btn { flex: 1; }
+  .counters { display: flex; justify-content: space-between; font-size: 11px; color: #4A443A; margin: 2px 2px 0; }
+  .counters b { color: var(--ink); font-size: 12px; }
+  .swatches { display: flex; gap: 8px; }
+  .swatch { flex: 1; height: 30px; border-radius: 9px; border: 2px solid transparent; cursor: pointer; transition: transform .12s; }
+  .swatch:hover { transform: translateY(-1px); }
+  .swatch.active { border-color: var(--ink); }
+  .slider-row { margin-bottom: 9px; }
+  .slider-row label { display: flex; justify-content: space-between; font-size: 11px; font-weight: 500; color: #4A443A; margin-bottom: 4px; }
+  .slider-row label span { font-variant-numeric: tabular-nums; color: var(--ink); }
+  .slider-row input { width: 100%; accent-color: var(--water); cursor: pointer; }
+  .gap { height: 10px; }
+
+  .howto { position: fixed; left: 26px; bottom: 22px; z-index: 10; pointer-events: none; max-width: 360px; }
+  .howto b { font-size: 11px; letter-spacing: .14em; text-transform: uppercase; }
+  .howto p { font-size: 12px; line-height: 1.6; color: #4A443A; margin-top: 5px; }
+  .howto .secondary { color: #8A8272; }
+
+  #debug { position: fixed; left: 26px; bottom: 22px; z-index: 11; font: 11px/1.5 monospace; background: rgba(20,18,14,.85); color: #E8E5DC; padding: 8px 10px; border-radius: 8px; display: none; white-space: pre; }
+
+  @media (max-width: 700px) {
+    .howto .secondary { display: none; }
+    .panel { top: auto; bottom: 16px; right: 12px; }
+    .title { max-width: 78vw; }
+    .subtitle { display: none; }
+  }
+</style>
+</head>
+<body>
+<div id="scene"></div>
+
+<header class="title">
+  <div class="eyebrow">MATERIAL STUDIES</div>
+  <h1>Island Jelly.</h1>
+  <div class="rule"></div>
+  <p class="subtitle">A sandbar, three palms and a sea that wobbles back. Joe the rooster rides whatever you stir up.</p>
+</header>
+
+<div class="pill" id="pill">WebGL &middot; three.js</div>
+
+<aside class="panel">
+  <h2>The sea</h2>
+  <button class="btn" id="btnPebble">Drop a pebble</button>
+  <button class="btn" id="btnCoconut">Drop a coconut</button>
+  <div class="counters"><span>Afloat <b id="cAfloat">0</b></span><span>Sunk <b id="cSunk">0</b></span><span>Ashore <b id="cAshore">0</b></span></div>
+
+  <h3>Flavour</h3>
+  <div class="swatches">
+    <button class="swatch active" data-flavour="lagoon" style="background:#35C8CC" title="Lagoon" aria-label="Lagoon flavour"></button>
+    <button class="swatch" data-flavour="raspberry" style="background:#F0457E" title="Raspberry" aria-label="Raspberry flavour"></button>
+    <button class="swatch" data-flavour="lime" style="background:#B4E03A" title="Lime" aria-label="Lime flavour"></button>
+  </div>
+
+  <h3>Water</h3>
+  <div class="slider-row"><label>Firmness <span id="vFirmness">0.60</span></label><input id="sFirmness" type="range" min="0" max="1" step="0.01" value="0.60"></div>
+  <div class="slider-row"><label>Wave damping <span id="vDamping">0.50</span></label><input id="sDamping" type="range" min="0" max="1" step="0.01" value="0.50"></div>
+  <div class="slider-row"><label>Tide <span id="vTide">0.00</span></label><input id="sTide" type="range" min="-0.35" max="0.35" step="0.01" value="0"></div>
+
+  <div class="gap"></div>
+  <div class="btn-row">
+    <button class="btn" id="btnReset">Reset</button>
+    <button class="btn" id="btnPause">Pause</button>
+  </div>
+  <button class="btn" id="btnView">Reset view</button>
+</aside>
+
+<div class="howto">
+  <b>How to play</b>
+  <p>Drag the water to stir waves. Drag the block edges to tilt the whole island. Grab pebbles and coconuts and throw them. Scroll to zoom, drag the sky to orbit.</p>
+  <p class="secondary">Joe surfs on his own. Rough water makes him brace. Calm water makes him shaka.</p>
+</div>
+
+<div id="debug"></div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js';
+
+/* ============================== config ============================== */
+
+const FLAVOURS = {
+  lagoon:    { water: 0x35C8CC, deep: 0x0E6E7A, highlight: 0xBFF6F2 },
+  raspberry: { water: 0xF0457E, deep: 0x8A1A44, highlight: 0xFFC9DC },
+  lime:      { water: 0xB4E03A, deep: 0x5C8A1E, highlight: 0xF2FBC4 },
+};
+
+const PALETTE = {
+  orange: 0xEE9532, gold: 0xF5B140, belly: 0xF8C653, rust: 0xD9692A,
+  comb: 0xDF2A2C, wingtip: 0x26322A, beak: 0xF7C433, legs: 0xF4B43A,
+  sand: 0xE8D9AE, sandDark: 0xC9A87C,
+};
+
+const params = {
+  flavour: 'lagoon',
+  firmness: 0.60,   // wave speed + stiffness
+  damping: 0.50,    // wave damping
+  tide: 0.0,        // sea level offset, recomputes land
+  paused: false,
+};
+
+const DEFAULTS = { ...params };
+
+const state = {
+  time: 0,
+  waveEnergy: 0,
+  waveEnergyS: 0,
+  calm: 1,
+  counts: { afloat: 0, sunk: 0, ashore: 0 },
+  gapMedian: 0,
+  gapMax: 0,
+};
+
+/* Hook registries: later slices register here. */
+const flavourListeners = [];
+const resetters = [];
+const tickers = [];
+
+/* ============================== renderer / scene ============================== */
+
+const container = document.getElementById('scene');
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.NeutralToneMapping;
+container.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environmentIntensity = 0.55;
+
+const camera = new THREE.PerspectiveCamera(28, window.innerWidth / window.innerHeight, 0.1, 200);
+const CAM_HOME = new THREE.Vector3(15.5, 14.5, 19);
+const TARGET_HOME = new THREE.Vector3(0, 0.4, 0);
+camera.position.copy(CAM_HOME);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.copy(TARGET_HOME);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.enablePan = false;
+controls.minDistance = 12;
+controls.maxDistance = 50;
+controls.maxPolarAngle = 1.42;
+controls.update();
+
+/* ============================== lights ============================== */
+
+const hemi = new THREE.HemisphereLight(0xFFF2DC, 0xB08968, 0.9);
+scene.add(hemi);
+
+const sun = new THREE.DirectionalLight(0xFFE3B3, 2.2);
+sun.position.set(-12, 18, 6);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left = -10; sun.shadow.camera.right = 10;
+sun.shadow.camera.top = 10; sun.shadow.camera.bottom = -10;
+sun.shadow.camera.near = 2; sun.shadow.camera.far = 50;
+sun.shadow.bias = -0.0004;
+scene.add(sun);
+
+/* ============================== diorama ============================== */
+
+const diorama = new THREE.Group();
+diorama.name = 'diorama';
+scene.add(diorama);
+
+/* Large shadow-catcher under the block. */
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(80, 80),
+  new THREE.ShadowMaterial({ opacity: 0.22 })
+);
+ground.rotation.x = -Math.PI / 2;
+ground.position.y = -1.6;
+ground.receiveShadow = true;
+scene.add(ground);
+
+/* ============================== UI ============================== */
+
+const $ = (id) => document.getElementById(id);
+
+function applyFlavour(name) {
+  params.flavour = name;
+  document.documentElement.style.setProperty('--water', '#' + new THREE.Color(FLAVOURS[name].water).getHexString());
+  document.querySelectorAll('.swatch').forEach((el) => el.classList.toggle('active', el.dataset.flavour === name));
+  for (const fn of flavourListeners) fn(FLAVOURS[name]);
+}
+
+document.querySelectorAll('.swatch').forEach((el) => {
+  el.addEventListener('click', () => applyFlavour(el.dataset.flavour));
+});
+
+function bindSlider(id, key, labelId, fmt) {
+  const el = $(id);
+  el.addEventListener('input', () => {
+    params[key] = parseFloat(el.value);
+    $(labelId).textContent = fmt(params[key]);
+  });
+}
+bindSlider('sFirmness', 'firmness', 'vFirmness', (v) => v.toFixed(2));
+bindSlider('sDamping', 'damping', 'vDamping', (v) => v.toFixed(2));
+bindSlider('sTide', 'tide', 'vTide', (v) => v.toFixed(2));
+
+$('btnPause').addEventListener('click', () => {
+  params.paused = !params.paused;
+  $('btnPause').textContent = params.paused ? 'Play' : 'Pause';
+});
+
+$('btnView').addEventListener('click', () => {
+  camera.position.copy(CAM_HOME);
+  controls.target.copy(TARGET_HOME);
+  controls.update();
+});
+
+$('btnReset').addEventListener('click', () => {
+  Object.assign(params, DEFAULTS);
+  $('sFirmness').value = params.firmness; $('vFirmness').textContent = params.firmness.toFixed(2);
+  $('sDamping').value = params.damping; $('vDamping').textContent = params.damping.toFixed(2);
+  $('sTide').value = params.tide; $('vTide').textContent = params.tide.toFixed(2);
+  applyFlavour(params.flavour);
+  for (const fn of resetters) fn();
+});
+
+$('btnPebble').addEventListener('click', () => window.__jelly?.spawn?.('pebble'));
+$('btnCoconut').addEventListener('click', () => window.__jelly?.spawn?.('coconut'));
+
+function setCounts(afloat, sunk, ashore) {
+  state.counts = { afloat, sunk, ashore };
+  $('cAfloat').textContent = afloat;
+  $('cSunk').textContent = sunk;
+  $('cAshore').textContent = ashore;
+}
+
+/* WebGL + three.js pill. */
+try {
+  const gl = renderer.getContext();
+  const ver = gl.getParameter(gl.VERSION) || '';
+  const short = ver.includes('WebGL 2') ? 'WebGL 2' : 'WebGL 1';
+  $('pill').textContent = short + ' · three r' + THREE.REVISION;
+} catch (e) { $('pill').textContent = 'WebGL · three r' + THREE.REVISION; }
+
+/* ============================== debug handle ============================== */
+
+window.__jelly = {
+  params, state, scene, camera, diorama, THREE,
+  spawn: null, /* filled by the objects slice */
+  getGapStats: () => ({ median: state.gapMedian, max: state.gapMax }),
+};
+
+/* ============================== loop ============================== */
+
+const clock = new THREE.Clock();
+const debugEl = $('debug');
+const showDebug = new URLSearchParams(window.location.search).has('debug');
+if (showDebug) debugEl.style.display = 'block';
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  if (!params.paused) {
+    state.time += dt;
+    state.waveEnergyS += (state.waveEnergy - state.waveEnergyS) * Math.min(1, dt * 2.5);
+    const targetCalm = state.waveEnergyS < 0.3 ? 1 : 0;
+    state.calm += (targetCalm - state.calm) * Math.min(1, dt * 1.0);
+    for (const fn of tickers) fn(dt, state.time);
+  }
+  controls.update();
+  renderer.render(scene, camera);
+  if (showDebug) {
+    debugEl.textContent =
+      't ' + state.time.toFixed(2) + '  energy ' + state.waveEnergyS.toFixed(3) + '  calm ' + state.calm.toFixed(2) + '\n' +
+      'gap median ' + state.gapMedian.toFixed(4) + '  max ' + state.gapMax.toFixed(4) + '\n' +
+      'afloat ' + state.counts.afloat + '  sunk ' + state.counts.sunk + '  ashore ' + state.counts.ashore;
+  }
+}
+animate();
+</script>
+</body>
+</html>
