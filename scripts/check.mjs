@@ -58,6 +58,9 @@ check('terrain shader: caustics + laplacian texture', /uCausticTex/.test(html) &
 check('strata canvas texture', /makeStrataTexture/.test(html) && /CanvasTexture/.test(html));
 check('four sediment sides + underside', (html.match(/mkSide\(/g) || []).length === 4 && /rotation\.x = Math\.PI \/ 2/.test(html));
 check('rim pebbles', /IcosahedronGeometry/.test(html));
+check('palms: 3 trunks + crowns', (html.match(/buildPalm\(/g) || []).length === 4 && /CatmullRomCurve3/.test(html));
+check('palm fronds merged', /mergeGeometries/.test(html) && /buildFrondGeometry/.test(html));
+check('palm coconuts (3 per crown)', /SphereGeometry\(0\.085/.test(html));
 
 console.log(failures === 0 ? '\nALL CHECKS PASSED' : `\n${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

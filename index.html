@@ -441,6 +441,142 @@ function makeStrataTexture() {
   }
 }
 
+/* ============================== palms ============================== */
+
+const palmCrowns = [];
+
+function addColorAttr(geo, color) {
+  const n = geo.attributes.position.count;
+  const arr = new Float32Array(n * 3);
+  const c = new THREE.Color(color);
+  for (let i = 0; i < n; i++) { arr[i * 3] = c.r; arr[i * 3 + 1] = c.g; arr[i * 3 + 2] = c.b; }
+  geo.setAttribute('color', new THREE.BufferAttribute(arr, 3));
+  return geo;
+}
+function addUvAttr(geo) {
+  const n = geo.attributes.position.count;
+  geo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(n * 2), 2));
+  return geo;
+}
+
+/* One droopy frond in local space: rib curve along +z, triangular leaflets. */
+function buildFrondGeometry(len, droop, frng) {
+  const pts = [];
+  for (let i = 0; i <= 5; i++) {
+    const t = i / 5;
+    pts.push(new THREE.Vector3(0, 0.06 * Math.sin(t * Math.PI) - droop * t * t * len * 0.55, t * len));
+  }
+  const curve = new THREE.CatmullRomCurve3(pts);
+  const rib = new THREE.TubeGeometry(curve, 8, 0.014, 5);
+  addColorAttr(rib, 0x4A6B2F);
+
+  const greens = [0x2E7D32, 0x388E3C, 0x43A047, 0x1B5E20, 0x66BB6A];
+  const leafPos = [], leafCol = [];
+  const stations = 9;
+  for (let s = 0; s < stations; s++) {
+    const t = 0.15 + (s / stations) * 0.85;
+    const R = curve.getPoint(t);
+    const T = curve.getTangent(t).normalize();
+    const width = 0.16 * (1 - t * 0.7);
+    for (const side of [-1, 1]) {
+      const tip = new THREE.Vector3(R.x + side * width, R.y - 0.035 - 0.03 * t, R.z + 0.10);
+      const b0 = R.clone().addScaledVector(T, -0.03);
+      const b1 = R.clone().addScaledVector(T, 0.03);
+      leafPos.push(b0.x, b0.y, b0.z, b1.x, b1.y, b1.z, tip.x, tip.y, tip.z);
+      const c = new THREE.Color(greens[Math.floor(frng() * greens.length)]);
+      c.offsetHSL(0, 0, (frng() - 0.5) * 0.08);
+      for (let k = 0; k < 3; k++) leafCol.push(c.r, c.g, c.b);
+    }
+  }
+  const leafGeo = new THREE.BufferGeometry();
+  leafGeo.setAttribute('position', new THREE.Float32BufferAttribute(leafPos, 3));
+  leafGeo.setAttribute('color', new THREE.Float32BufferAttribute(leafCol, 3));
+  leafGeo.computeVertexNormals();
+  addUvAttr(leafGeo);
+  return BufferGeometryUtils.mergeGeometries([rib, leafGeo]);
+}
+
+function buildPalm(x, z, height, seed) {
+  const prng = mulberry32(seed);
+  const palm = new THREE.Group();
+  const lean = 0.35 + prng() * 0.3;
+
+  // Trunk: CatmullRom tube, tapered, ring-banded vertex colors.
+  const curve = new THREE.CatmullRomCurve3([
+    new THREE.Vector3(0, 0, 0),
+    new THREE.Vector3(lean * 0.3, height * 0.35, 0.04),
+    new THREE.Vector3(lean * 0.75, height * 0.7, -0.03),
+    new THREE.Vector3(lean, height, 0.02),
+  ]);
+  const trunkGeo = new THREE.TubeGeometry(curve, 14, 0.16, 7);
+  {
+    const pos = trunkGeo.attributes.position;
+    const radial = 7 + 1;
+    for (let i = 0; i < pos.count; i++) {
+      const t = Math.floor(i / radial) / 14;
+      const cp = curve.getPoint(t);
+      const ox = pos.getX(i) - cp.x, oy = pos.getY(i) - cp.y, oz = pos.getZ(i) - cp.z;
+      const s = 1 - 0.55 * t;
+      pos.setXYZ(i, cp.x + ox * s, cp.y + oy * s, cp.z + oz * s);
+    }
+    const cols = new Float32Array(pos.count * 3);
+    const cA = new THREE.Color(0x8A6B4A), cB = new THREE.Color(0x5E4630), tmp = new THREE.Color();
+    for (let i = 0; i < pos.count; i++) {
+      const band = 0.5 + 0.5 * Math.sin(pos.getY(i) * 26 + seed);
+      tmp.copy(cA).lerp(cB, band * 0.8);
+      cols[i * 3] = tmp.r; cols[i * 3 + 1] = tmp.g; cols[i * 3 + 2] = tmp.b;
+    }
+    trunkGeo.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+  }
+  const trunk = new THREE.Mesh(trunkGeo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.92 }));
+  trunk.castShadow = true;
+  trunk.receiveShadow = true;
+  palm.add(trunk);
+
+  // Crown: 9 fronds merged into one geometry, plus 3 coconuts.
+  const crown = new THREE.Group();
+  crown.position.set(lean, height, 0.02);
+  const fronds = [];
+  for (let i = 0; i < 9; i++) {
+    const g = buildFrondGeometry(0.9 + prng() * 0.35, 0.9 + prng() * 0.4, prng);
+    const a = (i / 9) * Math.PI * 2 + (prng() - 0.5) * 0.4;
+    const pitch = -0.3 + prng() * 0.9;
+    const m = new THREE.Matrix4().makeRotationY(a).multiply(new THREE.Matrix4().makeRotationX(pitch));
+    g.applyMatrix4(m);
+    fronds.push(g);
+  }
+  const crownGeo = BufferGeometryUtils.mergeGeometries(fronds);
+  const crownMesh = new THREE.Mesh(crownGeo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8, side: THREE.DoubleSide }));
+  crownMesh.castShadow = true;
+  crown.add(crownMesh);
+  const nutMat = new THREE.MeshStandardMaterial({ color: 0x6B4A2F, roughness: 0.9 });
+  for (const off of [[0.10, -0.10, 0.05], [-0.09, -0.12, -0.03], [0.02, -0.08, -0.10]]) {
+    const nut = new THREE.Mesh(new THREE.SphereGeometry(0.085, 12, 10), nutMat);
+    nut.position.set(off[0], off[1], off[2]);
+    nut.castShadow = true;
+    crown.add(nut);
+  }
+  palm.add(crown);
+  palmCrowns.push({ crown, phase: prng() * Math.PI * 2 });
+
+  palm.position.set(x, terrainHeight(x, z) - 0.02, z);
+  palm.rotation.y = prng() * Math.PI * 2;
+  palm.rotation.x = (prng() - 0.5) * 0.1;
+  palm.rotation.z = (prng() - 0.5) * 0.1;
+  return palm;
+}
+
+diorama.add(buildPalm(-1.5, -1.0, 2.6, 101));
+diorama.add(buildPalm(1.6, 0.4, 3.0, 202));
+diorama.add(buildPalm(0.2, 1.6, 2.3, 303));
+
+tickers.push((dt, t) => {
+  for (const p of palmCrowns) {
+    p.crown.rotation.z = Math.sin(t * 0.7 + p.phase) * 0.035;
+    p.crown.rotation.x = Math.sin(t * 0.55 + p.phase * 1.3) * 0.025;
+  }
+});
+
 /* ============================== UI ============================== */
 
 const $ = (id) => document.getElementById(id);
