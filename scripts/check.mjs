@@ -101,6 +101,14 @@ check('wings: balance + calm shaka + wrist wiggle',
   /shaka = calm/.test(html) && /wingR\.rotation\.y/.test(html) && /Math\.sin\(t \* 1\.5\)/.test(html));
 check('blink: 4.2s cycle, sine close', /blinkClose/.test(html) && /t % 4\.2/.test(html));
 check('gap stats tracked', /gapRing/.test(html) && /gapMedian/.test(html));
+check('props: pebble sinks, coconut floats (fur), spawn assigned',
+  /spawnProp/.test(html) && /window\.__jelly\.spawn = spawnProp/.test(html) && /state = 'sinking'/.test(html) && /makeFur\(new THREE\.SphereGeometry\(radius/.test(html));
+check('props: splash on entry + ring effect', /splashAt/.test(html) && /RingGeometry/.test(html));
+check('props: buoyancy, drag, gradient push, wall bounce, roll',
+  /floatY/.test(html) && /g\.gx/.test(html) && /wallBounceProp/.test(html) && /_qRoll/.test(html));
+check('props: ashore + tide refloat + counters', /ashore/.test(html) && /waterH > terrH/.test(html) && /setCounts\(afloat/.test(html));
+check('props: grab + throw', /pointerToProp/.test(html) && /dragMode = 'grab'/.test(html) && /grabHistory/.test(html));
+check('props: reset clears', /props\.length = 0/.test(html));
 
 console.log(failures === 0 ? '\nALL CHECKS PASSED' : `\n${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

@@ -842,9 +842,36 @@ function pointerHitsBlock(e) {
   }
   return false;
 }
+function pointerToProp(e) {
+  pointerNDC.set((e.clientX / window.innerWidth) * 2 - 1, -(e.clientY / window.innerHeight) * 2 + 1);
+  raycaster.setFromCamera(pointerNDC, camera);
+  if (!props.length) return null;
+  const hits = raycaster.intersectObjects(props.map(p => p.mesh), true);
+  if (!hits.length) return null;
+  let obj = hits[0].object;
+  while (obj && !props.some(p => p.mesh === obj)) obj = obj.parent;
+  if (!obj) return null;
+  const prop = props.find(p => p.mesh === obj);
+  return { prop, point: diorama.worldToLocal(hits[0].point.clone()) };
+}
 
 window.addEventListener('pointerdown', (e) => {
   if (e.target !== renderer.domElement) return;
+  // Grab a pebble / coconut first; it takes priority over stirring / tilting.
+  const hitProp = pointerToProp(e);
+  if (hitProp) {
+    dragMode = 'grab';
+    grabbedProp = hitProp.prop;
+    grabbedProp.state = 'grabbed';
+    grabbedProp.vx = grabbedProp.vy = grabbedProp.vz = 0;
+    grabPlane.set(new THREE.Vector3(0, 1, 0), -grabbedProp.y);
+    grabOffset.set(grabbedProp.x - hitProp.point.x, 0, grabbedProp.z - hitProp.point.z);
+    grabHistory.length = 0;
+    grabHistory.push({ x: grabbedProp.x, z: grabbedProp.z, t: performance.now() });
+    controls.enabled = false;
+    lastPointer = { x: e.clientX, y: e.clientY, t: performance.now() };
+    return;
+  }
   const wp = pointerToWaterLocal(e);
   if (wp && terrainHeight(wp.x, wp.z) <= params.tide) {
     dragMode = 'stir';
@@ -858,7 +885,23 @@ window.addEventListener('pointerdown', (e) => {
 }, true);
 
 window.addEventListener('pointermove', (e) => {
-  if (dragMode === 'stir') {
+  if (dragMode === 'grab' && grabbedProp) {
+    pointerNDC.set((e.clientX / window.innerWidth) * 2 - 1, -(e.clientY / window.innerHeight) * 2 + 1);
+    raycaster.setFromCamera(pointerNDC, camera);
+    const pt = raycaster.ray.intersectPlane(grabPlane, _grabPoint);
+    if (pt) {
+      const local = diorama.worldToLocal(pt.clone());
+      const lim = 4.85 - grabbedProp.radius;
+      const nx = THREE.MathUtils.clamp(local.x + grabOffset.x, -lim, lim);
+      const nz = THREE.MathUtils.clamp(local.z + grabOffset.z, -lim, lim);
+      grabbedProp.x = nx; grabbedProp.z = nz;
+      grabbedProp.mesh.position.set(nx, grabbedProp.y, nz);
+      const now = performance.now();
+      grabHistory.push({ x: nx, z: nz, t: now });
+      while (grabHistory.length > 2 && now - grabHistory[0].t > 120) grabHistory.shift();
+    }
+    lastPointer = { x: e.clientX, y: e.clientY, t: performance.now() };
+  } else if (dragMode === 'stir') {
     const wp = pointerToWaterLocal(e);
     if (wp && lastWaterLocal) {
       const dx = wp.x - lastWaterLocal.x, dz = wp.z - lastWaterLocal.z;
@@ -882,6 +925,28 @@ window.addEventListener('pointermove', (e) => {
 });
 
 window.addEventListener('pointerup', () => {
+  if (dragMode === 'grab' && grabbedProp) {
+    const p = grabbedProp;
+    // Throw velocity from the last 120 ms of pointer motion.
+    let tvx = 0, tvz = 0;
+    const now = performance.now();
+    const recent = grabHistory.filter(h => now - h.t <= 120);
+    if (recent.length >= 2) {
+      const first = recent[0], last = recent[recent.length - 1];
+      const dt = Math.max(1, last.t - first.t) / 1000;
+      tvx = (last.x - first.x) / dt;
+      tvz = (last.z - first.z) / dt;
+      const sp = Math.hypot(tvx, tvz);
+      if (sp > 3) { tvx *= 3 / sp; tvz *= 3 / sp; }
+    }
+    p.vx = tvx; p.vz = tvz; p.vy = 0;
+    const waterH = sampleWater(p.x, p.z).h;
+    const terrH = terrainHeight(p.x, p.z);
+    if (p.y - p.radius <= waterH && terrH <= waterH) p.state = p.kind === 'pebble' ? 'sinking' : 'afloat';
+    else if (p.y - p.radius <= terrH) { p.y = terrH + p.radius; p.state = 'ashore'; }
+    else p.state = 'air';
+    grabbedProp = null;
+  }
   if (dragMode === 'tilt') { tilt.trx = 0; tilt.trz = 0; }
   dragMode = null;
   controls.enabled = true;
@@ -1606,6 +1671,154 @@ tickers.push((dt, t) => {
   // Blink: slow, sleepy, every ~4.2 s, sine close over ~0.5 s.
   const close = blinkClose(t);
   for (const lid of lidGroups) lid.rotation.x = lid.userData.restX + close * 0.85;
+});
+
+/* ============================== Pebbles + coconuts ============================== */
+
+/* States: air | sinking | afloat | sunk | ashore | grabbed.
+ * Pebbles sink to the seabed; coconuts float. Both splash on entry,
+ * roll as they move, and wash ashore / refloat with the tide. */
+
+const props = [];
+const splashes = [];
+let grabbedProp = null;
+const grabPlane = new THREE.Plane();
+const grabOffset = new THREE.Vector3();
+const grabHistory = []; // { x, z, t } for the throw velocity
+const _grabPoint = new THREE.Vector3();
+const _qRoll = new THREE.Quaternion();
+
+function splashAt(x, z, kind) {
+  disturb(x, z, kind === 'coconut' ? 0.5 : 0.4, kind === 'coconut' ? 0.08 : 0.06, kind === 'coconut' ? 0.2 : 0.15);
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.08, 0.13, 24),
+    new THREE.MeshBasicMaterial({ color: 0xFFFFFF, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false })
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.set(x, sampleWater(x, z).h + 0.02, z);
+  diorama.add(ring);
+  splashes.push({ mesh: ring, x, z, age: 0 });
+}
+
+function spawnProp(kind) {
+  const a = Math.random() * Math.PI * 2;
+  const rr = 3.0 + Math.random() * 1.4;
+  const x = Math.cos(a) * rr, z = Math.sin(a) * rr;
+  let mesh, radius;
+  if (kind === 'pebble') {
+    radius = 0.09;
+    const colors = [0xD8CFC4, 0xE8B4B8, 0xB8C4D8, 0xC4D8B8];
+    const mat = new THREE.MeshStandardMaterial({ color: colors[Math.floor(Math.random() * colors.length)], roughness: 0.9, flatShading: true });
+    mesh = new THREE.Mesh(new THREE.IcosahedronGeometry(radius, 0), mat);
+    mesh.castShadow = true;
+  } else {
+    radius = 0.14;
+    mesh = makeFur(new THREE.SphereGeometry(radius, 20, 14), 0x6B4A2F, { len: 0.02, rep: 180 });
+  }
+  mesh.position.set(x, 2.5, z);
+  diorama.add(mesh);
+  props.push({ kind, mesh, state: 'air', x, y: 2.5, z, vx: 0, vy: 0, vz: 0, radius });
+}
+window.__jelly.spawn = spawnProp;
+
+function wallBounceProp(p, bounce) {
+  const lim = 4.85 - p.radius;
+  if (p.x > lim) { p.x = lim; p.vx = -Math.abs(p.vx) * bounce; }
+  if (p.x < -lim) { p.x = -lim; p.vx = Math.abs(p.vx) * bounce; }
+  if (p.z > lim) { p.z = lim; p.vz = -Math.abs(p.vz) * bounce; }
+  if (p.z < -lim) { p.z = -lim; p.vz = Math.abs(p.vz) * bounce; }
+}
+
+let lastCountsKey = '';
+tickers.push((dt, t) => {
+  // Splash rings expand, fade, and bob with the surface.
+  for (let i = splashes.length - 1; i >= 0; i--) {
+    const s = splashes[i];
+    s.age += dt;
+    const k = s.age / 0.4;
+    if (k >= 1) { diorama.remove(s.mesh); s.mesh.geometry.dispose(); s.mesh.material.dispose(); splashes.splice(i, 1); continue; }
+    const sc = 1 + k * 2.5;
+    s.mesh.scale.set(sc, sc, 1);
+    s.mesh.material.opacity = 0.7 * (1 - k);
+    s.mesh.position.y = sampleWater(s.x, s.z).h + 0.02;
+  }
+  // Props.
+  for (const p of props) {
+    if (p.state === 'grabbed') continue;
+    const waterH = sampleWater(p.x, p.z).h;
+    const terrH = terrainHeight(p.x, p.z);
+    if (p.state === 'air') {
+      p.vy -= 9.8 * dt;
+      p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
+      const bottom = p.y - p.radius;
+      if (terrH > waterH) {
+        if (bottom <= terrH) { p.y = terrH + p.radius; p.vy = 0; p.vx *= 0.3; p.vz *= 0.3; p.state = 'ashore'; }
+      } else {
+        if (bottom <= waterH && p.vy < 0) {
+          splashAt(p.x, p.z, p.kind);
+          if (p.kind === 'pebble') { p.state = 'sinking'; p.vy *= 0.15; p.vx *= 0.5; p.vz *= 0.5; }
+          else { p.state = 'afloat'; p.vy = 0; p.vx *= 0.6; p.vz *= 0.6; }
+        } else if (bottom <= terrH) {
+          p.y = terrH + p.radius; p.vy = 0;
+          p.state = p.kind === 'pebble' ? 'sunk' : 'afloat';
+        }
+      }
+      wallBounceProp(p, 0.4);
+    } else if (p.state === 'sinking') {
+      p.vy += (-0.9 - p.vy) * Math.min(1, dt * 2.5); // terminal sink speed
+      p.vx *= (1 - Math.min(1, dt * 2)); p.vz *= (1 - Math.min(1, dt * 2));
+      p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
+      if (p.y - p.radius <= terrH) {
+        p.y = terrH + p.radius; p.vy = 0;
+        p.state = terrH > waterH + 0.02 ? 'ashore' : 'sunk';
+      }
+      wallBounceProp(p, 0.4);
+    } else if (p.state === 'afloat') {
+      const floatY = waterH - p.radius * 0.3;
+      p.vy += (floatY - p.y) * 25 * dt;
+      p.vy *= (1 - Math.min(1, dt * 4));
+      const g = sampleWater(p.x, p.z);
+      p.vx += -g.gx * 0.5 * dt; p.vz += -g.gz * 0.5 * dt;
+      p.vx *= (1 - Math.min(1, dt * 1.5)); p.vz *= (1 - Math.min(1, dt * 1.5));
+      p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
+      if (terrH > waterH + 0.02 && p.y - p.radius <= terrH) {
+        p.y = terrH + p.radius; p.vy = 0; p.vx = 0; p.vz = 0; p.state = 'ashore';
+      }
+      wallBounceProp(p, 0.4);
+    } else if (p.state === 'ashore') {
+      if (waterH > terrH + 0.03) p.state = p.kind === 'pebble' ? 'sinking' : 'afloat';
+      else p.y = terrH + p.radius;
+    } else if (p.state === 'sunk') {
+      if (terrH > waterH + 0.02) p.state = 'ashore';
+      else p.y = terrH + p.radius;
+    }
+    // Roll visually with horizontal motion.
+    const hSpeed = Math.hypot(p.vx, p.vz);
+    if (hSpeed > 0.01 && p.state !== 'ashore' && p.state !== 'sunk') {
+      _qRoll.setFromAxisAngle(_grabPoint.set(p.vz, 0, -p.vx).normalize(), hSpeed * dt / p.radius);
+      p.mesh.quaternion.premultiply(_qRoll);
+    }
+    p.mesh.position.set(p.x, p.y, p.z);
+  }
+  // Counters.
+  let afloat = 0, sunk = 0, ashore = 0;
+  for (const p of props) {
+    if (p.state === 'afloat') afloat++;
+    else if (p.state === 'sunk') sunk++;
+    else if (p.state === 'ashore') ashore++;
+  }
+  const key = afloat + '/' + sunk + '/' + ashore;
+  if (key !== lastCountsKey) { lastCountsKey = key; setCounts(afloat, sunk, ashore); }
+});
+
+resetters.push(() => {
+  for (const p of props) diorama.remove(p.mesh);
+  props.length = 0;
+  for (const s of splashes) { diorama.remove(s.mesh); s.mesh.geometry.dispose(); s.mesh.material.dispose(); }
+  splashes.length = 0;
+  grabbedProp = null;
+  lastCountsKey = '';
+  setCounts(0, 0, 0);
 });
 
 /* ============================== UI ============================== */
