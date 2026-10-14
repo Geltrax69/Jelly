@@ -1046,6 +1046,118 @@ function makeFur(geometry, color, opts = {}) {
   return group;
 }
 
+/* ============================== Joe: board + legs + body + neck ============================== */
+
+/* Hierarchy: surfer (1.35) -> boardTilt -> board + rooster (0.56, yaw 0.5)
+ * -> bodyGroup (sways, origin at the feet). Rooster-local units, feet at y=0,
+ * character facing +z. Fur transforms are baked into geometry (scaling a
+ * fur group would squash the shader displacement). */
+
+const surfer = new THREE.Group();
+surfer.scale.setScalar(1.35);
+diorama.add(surfer);
+
+const boardTilt = new THREE.Group();
+surfer.add(boardTilt);
+
+{
+  const boardGeo = new THREE.SphereGeometry(1, 32, 16);
+  const boardMat = new THREE.MeshPhysicalMaterial({ color: 0xFFF6E0, roughness: 0.35, clearcoat: 1, clearcoatRoughness: 0.15 });
+  const boardMesh = new THREE.Mesh(boardGeo, boardMat);
+  boardMesh.scale.set(0.34, 0.045, 0.82);
+  boardMesh.castShadow = true;
+  boardMesh.receiveShadow = true;
+  boardTilt.add(boardMesh);
+  const stripe = new THREE.Mesh(boardGeo, new THREE.MeshPhysicalMaterial({ color: 0xF26B4F, roughness: 0.4, clearcoat: 0.8 }));
+  stripe.scale.set(0.10, 0.046, 0.80);
+  stripe.position.y = 0.001;
+  boardTilt.add(stripe);
+  const fin = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.18, 12), new THREE.MeshPhysicalMaterial({ color: 0xF26B4F, roughness: 0.5 }));
+  fin.scale.set(0.35, 1, 1);
+  fin.rotation.set(Math.PI, 0, 0.25);
+  fin.position.set(0, -0.10, -0.32);
+  boardTilt.add(fin);
+}
+
+const rooster = new THREE.Group();
+rooster.scale.setScalar(0.56);
+rooster.rotation.y = 0.5;
+rooster.position.y = 0.037; // toe bottoms rest on the board top
+boardTilt.add(rooster);
+
+const bodyGroup = new THREE.Group(); // sways; origin at the feet
+rooster.add(bodyGroup);
+
+/* ---- legs: felt tubes, knobbly knees, splayed toes ---- */
+const feltMat = new THREE.MeshStandardMaterial({ color: PALETTE.legs, roughness: 0.95 });
+function buildLeg(side) {
+  const g = new THREE.Group();
+  const curve = new THREE.CatmullRomCurve3([
+    new THREE.Vector3(0.16 * side, 0.03, 0),
+    new THREE.Vector3(0.155 * side, 0.25, 0.08),
+    new THREE.Vector3(0.10 * side, 0.50, 0),
+  ]);
+  const tube = new THREE.Mesh(new THREE.TubeGeometry(curve, 8, 0.028, 6), feltMat);
+  tube.castShadow = true;
+  g.add(tube);
+  const knee = new THREE.Mesh(new THREE.SphereGeometry(0.045, 12, 10), feltMat);
+  knee.position.set(0.155 * side, 0.25, 0.08);
+  knee.castShadow = true;
+  g.add(knee);
+  const foot = new THREE.Group();
+  foot.position.set(0.16 * side, 0.03, 0);
+  for (const a of [-0.5, 0, 0.5, Math.PI]) {
+    const toeG = new THREE.Group();
+    toeG.rotation.y = a;
+    const toe = new THREE.Mesh(new THREE.CapsuleGeometry(0.016, 0.14, 4, 8), feltMat);
+    toe.rotation.x = Math.PI / 2;
+    toe.position.z = 0.09;
+    toe.castShadow = true;
+    toeG.add(toe);
+    foot.add(toeG);
+  }
+  g.add(foot);
+  return g;
+}
+bodyGroup.add(buildLeg(-1));
+bodyGroup.add(buildLeg(1));
+
+/* ---- slouch: rust shorts, orange torso leaning back, yellow belly forward ---- */
+for (const side of [-1, 1]) {
+  const shortsGeo = new THREE.SphereGeometry(0.11, 16, 12);
+  shortsGeo.scale(1, 0.9, 1);
+  const shorts = makeFur(shortsGeo, PALETTE.rust, { len: 0.025, rep: 200 });
+  shorts.position.set(0.11 * side, 0.52, 0.02);
+  bodyGroup.add(shorts);
+}
+{
+  const torsoGeo = new THREE.SphereGeometry(1, 24, 18);
+  torsoGeo.scale(0.30, 0.38, 0.26);
+  torsoGeo.rotateX(-0.18);
+  const torso = makeFur(torsoGeo, PALETTE.orange, { len: 0.03, rep: 220 });
+  torso.position.set(0, 0.80, -0.03);
+  bodyGroup.add(torso);
+}
+{
+  const bellyGeo = new THREE.SphereGeometry(1, 24, 18);
+  bellyGeo.scale(0.24, 0.30, 0.20);
+  const belly = makeFur(bellyGeo, PALETTE.belly, { len: 0.03, rep: 220 });
+  belly.position.set(0, 0.72, 0.13);
+  bodyGroup.add(belly);
+}
+
+/* ---- neck: long fur tube curving forward, long drooping fur ---- */
+{
+  const neckCurve = new THREE.CatmullRomCurve3([
+    new THREE.Vector3(0, 0.90, -0.05),
+    new THREE.Vector3(0, 1.05, -0.02),
+    new THREE.Vector3(0, 1.20, 0.05),
+    new THREE.Vector3(0, 1.33, 0.13),
+  ]);
+  const neck = makeFur(new THREE.TubeGeometry(neckCurve, 12, 0.085, 10), PALETTE.orange, { len: 0.06, grav: 1.4, rep: 220 });
+  bodyGroup.add(neck);
+}
+
 /* ============================== UI ============================== */
 
 const $ = (id) => document.getElementById(id);

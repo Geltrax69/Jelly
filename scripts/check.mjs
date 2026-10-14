@@ -73,6 +73,13 @@ check('fur shader: shells, droop, strand discard, root-to-tip shade',
   /furMaterial/.test(html) && /transformed\.y -= uGrav/.test(html) && /discard/.test(html) && /mix\(0\.58, 1\.07/.test(html));
 check('fur cache + base-only shadows', /furCache/.test(html) && /castShadow = k === 0/.test(html));
 check('fur density rep ~200-250', /rep = 220/.test(html));
+check('surfer hierarchy: surfer > boardTilt > rooster > bodyGroup',
+  /surfer/.test(html) && /boardTilt/.test(html) && /rooster/.test(html) && /bodyGroup/.test(html));
+check('surfboard: flattened sphere + coral stripe + fin',
+  /boardMesh\.scale\.set\(0\.34, 0\.045, 0\.82\)/.test(html) && /stripe\.scale\.set\(0\.10/.test(html) && /ConeGeometry\(0\.06, 0\.18/.test(html));
+check('legs: felt tube + knee + 4 splayed toes', /buildLeg/.test(html) && /CapsuleGeometry\(0\.016, 0\.14/.test(html));
+check('slouch: shorts + torso + belly + neck',
+  /makeFur\(shortsGeo/.test(html) && /makeFur\(torsoGeo/.test(html) && /makeFur\(bellyGeo/.test(html) && /neckCurve/.test(html));
 
 console.log(failures === 0 ? '\nALL CHECKS PASSED' : `\n${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);
