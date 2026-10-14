@@ -52,6 +52,12 @@ check('controls: no pan, distance 12-50, polar 1.42',
 check('flavours present (lagoon, raspberry, lime)',
   /lagoon/.test(html) && /raspberry/.test(html) && /lime/.test(html));
 check('debug handle exposed', /window\.__jelly/.test(html));
+check('terrain heightfield (160 res)', /PlaneGeometry\(10,\s*10,\s*RES\s*-\s*1,\s*RES\s*-\s*1\)/.test(html) && /const RES = 160/.test(html));
+check('terrain shader: wet darkening + waterline', /wet/.test(html) && /wline/.test(html));
+check('terrain shader: caustics + laplacian texture', /uCausticTex/.test(html) && /lapTex/.test(html));
+check('strata canvas texture', /makeStrataTexture/.test(html) && /CanvasTexture/.test(html));
+check('four sediment sides + underside', (html.match(/mkSide\(/g) || []).length === 4 && /rotation\.x = Math\.PI \/ 2/.test(html));
+check('rim pebbles', /IcosahedronGeometry/.test(html));
 
 console.log(failures === 0 ? '\nALL CHECKS PASSED' : `\n${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);
