@@ -73,7 +73,11 @@ tilt it on its damped spring, the water's rest plane tilts with it — the
 sea genuinely sloshes to the new level, and the terrain's waterline follows
 the same plane. The rendered surface is a 100×100 mesh whose vertices sit
 at the sim's cell centres, so what you see is exactly what the physics
-simulates. It uses a transmissive physical material (IOR 1.33, attenuation)
+simulates — with one refinement: the mesh is *render-interpolated* between
+sim steps. The ticker snapshots the heightfield before each frame's fixed
+steps, then renders `prev + (current − prev) × alpha` where `alpha` is the
+leftover sim fraction, so the water glides smoothly instead of jumping a
+whole 1/120 s step per frame (which reads as jitter at low frame rates).
 with a scrolling procedural ripple normal map, plus a transmissive skirt
 around the perimeter that follows the edge height, with bright highlight
 lines on top. Stirring drags a Gaussian disturbance along the pointer path;

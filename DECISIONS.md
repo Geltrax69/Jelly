@@ -141,3 +141,18 @@ itself is a single `index.html`, committed slice by slice to `main`.
 - **Runtime check in headless Chromium.** Static checks prove structure;
   only a real render proves zero console errors, the eyes reading, and
   the gap target under aggressive stirring.
+
+## Jitter fix (post-ship)
+
+- **Render interpolation for the water.** The sim runs at fixed 1/120 s
+  steps but the mesh used to jump to the post-step state once per frame —
+  at low frame rates the surface moved in visible steps. Now the ticker
+  snapshots the heightfield before each frame's steps and renders
+  `prev + (current − prev) × alpha`, so the water glides between steps.
+  Physics still reads the raw latest state; the visual lag is under one
+  sim step.
+- **Pixel ratio cap 2 → 1.5, shadow map 2048 → 1024.** On Retina, a cap
+  of 2 costs 4× the pixels for the fragment-heavy fur + transmission;
+  1.5 keeps it sharp and buys back ~44% of the fragment work. The
+  2048 shadow map cost the shadow pass dearly; 1024 is plenty for this
+  diorama.

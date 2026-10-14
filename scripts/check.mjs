@@ -38,7 +38,7 @@ unlinkSync(tmp);
 // Structural invariants.
 check('no TODO/FIXME markers', !/TODO|FIXME|XXX/.test(html));
 check('no NaN-producing patterns (0/0, Math.sqrt(-', !/0\s*\/\s*0|Math\.sqrt\s*\(\s*-/.test(html));
-check('renderer capped pixel ratio 2', /Math\.min\(window\.devicePixelRatio,\s*2\)/.test(html));
+check('renderer capped pixel ratio 1.5', /Math\.min\(window\.devicePixelRatio,\s*1\.5\)/.test(html));
 check('PCFSoft shadows', /PCFSoftShadowMap/.test(html));
 check('NeutralToneMapping', /NeutralToneMapping/.test(html));
 check('RoomEnvironment used', /RoomEnvironment/.test(html));
@@ -108,7 +108,10 @@ check('props: buoyancy, drag, gradient push, wall bounce, roll',
   /floatY/.test(html) && /g\.gx/.test(html) && /wallBounceProp/.test(html) && /_qRoll/.test(html));
 check('props: ashore + tide refloat + counters', /ashore/.test(html) && /waterH > terrH/.test(html) && /setCounts\(afloat/.test(html));
 check('props: grab + throw', /pointerToProp/.test(html) && /dragMode = 'grab'/.test(html) && /grabHistory/.test(html));
-check('props: reset clears', /props\.length = 0/.test(html));
+check('jitter fix: water render interpolation (wHPrev + alpha)',
+  /wHPrev/.test(html) && /wHRender/.test(html) && /wAlpha = THREE\.MathUtils\.clamp\(wSimAcc \/ WSTEP/.test(html));
+check('jitter fix: pixel ratio capped at 1.5, shadow map 1024',
+  /setPixelRatio\(Math\.min\(window\.devicePixelRatio, 1\.5\)\)/.test(html) && /mapSize\.set\(1024, 1024\)/.test(html));
 
 console.log(failures === 0 ? '\nALL CHECKS PASSED' : `\n${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

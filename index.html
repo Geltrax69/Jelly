@@ -172,7 +172,7 @@ const tickers = [];
 
 const container = document.getElementById('scene');
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5)); // 2x cost 4x pixels on Retina; 1.5 keeps it sharp and smooth
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -208,7 +208,7 @@ scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xFFE3B3, 2.2);
 sun.position.set(-12, 18, 6);
 sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.mapSize.set(1024, 1024); // 2048 cost the shadow pass dearly; 1024 is plenty for this diorama
 sun.shadow.camera.left = -10; sun.shadow.camera.right = 10;
 sun.shadow.camera.top = 10; sun.shadow.camera.bottom = -10;
 sun.shadow.camera.near = 2; sun.shadow.camera.far = 50;
@@ -595,6 +595,9 @@ const WN = 100;
 const WCELL = 10 / WN;
 const WSTEP = 1 / 120;
 const wH = new Float32Array(WN * WN);
+const wHPrev = new Float32Array(WN * WN); // state before this frame's sim steps
+let wAlpha = 0; // leftover sim fraction: render interpolates prev -> current
+function wHRender(idx) { return wHPrev[idx] + (wH[idx] - wHPrev[idx]) * wAlpha; }
 const wV = new Float32Array(WN * WN);
 const wLand = new Uint8Array(WN * WN);
 const wEqArr = new Float32Array(WN * WN);
@@ -812,7 +815,7 @@ diorama.add(hiMesh);
 function updatePerimeterStrip(strip, cols, bottomFn, topFn) {
   const pos = strip.pos;
   for (let k = 0; k < cols.length; k++) {
-    const h = wH[cols[k].idx];
+    const h = wHRender(cols[k].idx);
     pos[(k * 2) * 3 + 1] = bottomFn(h);
     pos[(k * 2 + 1) * 3 + 1] = topFn(h);
   }
@@ -987,12 +990,15 @@ tickers.push((dt, t) => {
   }
 
   wSimAcc += dt;
+  wHPrev.set(wH); // snapshot before this frame's steps for render interpolation
   let guard = 0;
   while (wSimAcc >= WSTEP && guard < 8) { stepWave(); wSimAcc -= WSTEP; guard++; }
+  wAlpha = THREE.MathUtils.clamp(wSimAcc / WSTEP, 0, 1);
 
-  // Surface mesh.
+  // Surface mesh: interpolate prev -> current so the water moves smoothly
+  // between fixed sim steps instead of jumping a whole step per frame.
   const pos = waterGeo.attributes.position;
-  for (let idx = 0; idx < WN * WN; idx++) pos.array[idx * 3 + 1] = wH[idx];
+  for (let idx = 0; idx < WN * WN; idx++) pos.array[idx * 3 + 1] = wHRender(idx);
   pos.needsUpdate = true;
   waterGeo.computeVertexNormals();
 
