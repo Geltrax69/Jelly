@@ -61,6 +61,14 @@ check('rim pebbles', /IcosahedronGeometry/.test(html));
 check('palms: 3 trunks + crowns', (html.match(/buildPalm\(/g) || []).length === 4 && /CatmullRomCurve3/.test(html));
 check('palm fronds merged', /mergeGeometries/.test(html) && /buildFrondGeometry/.test(html));
 check('palm coconuts (3 per crown)', /SphereGeometry\(0\.085/.test(html));
+check('wave sim: 100x100, fixed 1/120 step', /const WN = 100/.test(html) && /WSTEP = 1 \/ 120/.test(html));
+check('wave sim: laplacian + spring + damping + land mask', /lap/.test(html) && /wEqArr/.test(html) && /wLand/.test(html));
+check('tilt spring + tilted equilibrium', /tilt\.vrx/.test(html) && /wEqA/.test(html) && /makeRotationFromEuler/.test(html));
+check('water surface: transmission, IOR 1.33, ripple normal map', /transmission: 1/.test(html) && /ior: 1\.33/.test(html) && /makeRippleNormalMap/.test(html));
+check('skirt + highlight lines', /skirtMat/.test(html) && /hiMat/.test(html));
+check('stir + tilt pointer modes', /dragMode/.test(html) && /disturb\(px/.test(html));
+check('drips', /wDripTimer/.test(html));
+check('sampleWater exposed for surfing + objects', /function sampleWater/.test(html));
 
 console.log(failures === 0 ? '\nALL CHECKS PASSED' : `\n${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

@@ -284,18 +284,21 @@ terrainMat.onBeforeCompile = (shader) => {
   shader.uniforms.uTime = { value: 0 };
   shader.uniforms.uWaterLevel = { value: 0 };
   shader.uniforms.uCausticTex = { value: lapTex };
+  shader.uniforms.uEqA = { value: 0 };
+  shader.uniforms.uEqB = { value: 0 };
   terrainShader = shader;
   shader.vertexShader = shader.vertexShader
     .replace('#include <common>', '#include <common>\nvarying vec3 vLPos;')
     .replace('#include <begin_vertex>', '#include <begin_vertex>\nvLPos = transformed;');
   shader.fragmentShader = shader.fragmentShader
-    .replace('#include <common>', '#include <common>\nvarying vec3 vLPos;\nuniform vec3 uWaterColor;\nuniform vec3 uDeepColor;\nuniform float uTime;\nuniform float uWaterLevel;\nuniform sampler2D uCausticTex;')
+    .replace('#include <common>', '#include <common>\nvarying vec3 vLPos;\nuniform vec3 uWaterColor;\nuniform vec3 uDeepColor;\nuniform float uTime;\nuniform float uWaterLevel;\nuniform float uEqA;\nuniform float uEqB;\nuniform sampler2D uCausticTex;')
     .replace('#include <color_fragment>', `#include <color_fragment>
     {
-      float depth = uWaterLevel - vLPos.y;
-      float wet = smoothstep(0.16, 0.0, abs(vLPos.y - uWaterLevel));
+      float wl = uWaterLevel + uEqA * vLPos.x + uEqB * vLPos.z;
+      float depth = wl - vLPos.y;
+      float wet = smoothstep(0.16, 0.0, abs(vLPos.y - wl));
       diffuseColor.rgb *= (1.0 - 0.22 * wet);
-      float wline = smoothstep(0.014, 0.0, abs(vLPos.y - uWaterLevel));
+      float wline = smoothstep(0.014, 0.0, abs(vLPos.y - wl));
       diffuseColor.rgb *= (1.0 - 0.38 * wline);
       if (depth > 0.0) {
         float t = clamp(depth / 1.2, 0.0, 1.0);
@@ -575,6 +578,385 @@ tickers.push((dt, t) => {
     p.crown.rotation.z = Math.sin(t * 0.7 + p.phase) * 0.035;
     p.crown.rotation.x = Math.sin(t * 0.55 + p.phase * 1.3) * 0.025;
   }
+});
+
+/* ============================== jelly sea ============================== */
+
+const WN = 100;
+const WCELL = 10 / WN;
+const WSTEP = 1 / 120;
+const wH = new Float32Array(WN * WN);
+const wV = new Float32Array(WN * WN);
+const wLand = new Uint8Array(WN * WN);
+const wEqArr = new Float32Array(WN * WN);
+let wSimAcc = 0;
+let wLastTide = params.tide;
+let wEqA = 0, wEqB = 0;
+let wDripTimer = 1.0;
+
+const wIndex = (i, j) => j * WN + i;
+const wX = (i) => -5 + (i + 0.5) * WCELL;
+const wZ = (j) => -5 + (j + 0.5) * WCELL;
+
+function recomputeLand() {
+  for (let j = 0; j < WN; j++) for (let i = 0; i < WN; i++) {
+    const idx = wIndex(i, j);
+    wLand[idx] = terrainHeight(wX(i), wZ(j)) > params.tide ? 1 : 0;
+    if (wLand[idx]) { wH[idx] = params.tide; wV[idx] = 0; }
+  }
+}
+recomputeLand();
+
+function stepWave() {
+  const c2 = 0.8 + params.firmness * 3.2;
+  const k = 2.0 + params.firmness * 6.0;
+  const ret = 1 - (0.005 + params.damping * 0.03);
+  const dx2 = WCELL * WCELL;
+  for (let j = 0; j < WN; j++) {
+    for (let i = 0; i < WN; i++) {
+      const idx = wIndex(i, j);
+      if (wLand[idx]) { wH[idx] = wEqArr[idx]; wV[idx] = 0; continue; }
+      const l = i > 0 ? wH[idx - 1] : wH[idx];
+      const r = i < WN - 1 ? wH[idx + 1] : wH[idx];
+      const u = j > 0 ? wH[idx - WN] : wH[idx];
+      const d = j < WN - 1 ? wH[idx + WN] : wH[idx];
+      const lap = (l + r + u + d - 4 * wH[idx]) / dx2;
+      wV[idx] = (wV[idx] + (c2 * lap - k * (wH[idx] - wEqArr[idx])) * WSTEP) * ret;
+      wH[idx] += wV[idx] * WSTEP;
+      if (wH[idx] > 0.6) wH[idx] = 0.6; else if (wH[idx] < -0.6) wH[idx] = -0.6;
+      if (wV[idx] > 3) wV[idx] = 3; else if (wV[idx] < -3) wV[idx] = -3;
+    }
+  }
+}
+
+/* Gaussian disturbance. Used by stirring, drips, splashes, wakes. */
+function disturb(x, z, radius, heightDelta, velDelta) {
+  const i0 = Math.max(0, Math.floor((x - radius + 5) / WCELL));
+  const i1 = Math.min(WN - 1, Math.ceil((x + radius + 5) / WCELL));
+  const j0 = Math.max(0, Math.floor((z - radius + 5) / WCELL));
+  const j1 = Math.min(WN - 1, Math.ceil((z + radius + 5) / WCELL));
+  for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+    const idx = wIndex(i, j);
+    if (wLand[idx]) continue;
+    const dx = wX(i) - x, dz = wZ(j) - z;
+    const g = Math.exp(-(dx * dx + dz * dz) / (radius * radius * 0.5));
+    wH[idx] += heightDelta * g;
+    wV[idx] += velDelta * g;
+  }
+}
+
+/* Bilinear sample of the water surface, with gradient. Diorama-local coords. */
+function sampleWater(x, z) {
+  const fi = (x + 5) / WCELL - 0.5, fj = (z + 5) / WCELL - 0.5;
+  const i = Math.min(WN - 1, Math.max(0, Math.floor(fi)));
+  const j = Math.min(WN - 1, Math.max(0, Math.floor(fj)));
+  const fx = Math.min(1, Math.max(0, fi - i)), fz = Math.min(1, Math.max(0, fj - j));
+  const i1 = Math.min(WN - 1, i + 1), j1 = Math.min(WN - 1, j + 1);
+  const h00 = wH[wIndex(i, j)], h10 = wH[wIndex(i1, j)];
+  const h01 = wH[wIndex(i, j1)], h11 = wH[wIndex(i1, j1)];
+  const h = h00 * (1 - fx) * (1 - fz) + h10 * fx * (1 - fz) + h01 * (1 - fx) * fz + h11 * fx * fz;
+  const gx = ((h10 - h00) * (1 - fz) + (h11 - h01) * fz) / WCELL;
+  const gz = ((h01 - h00) * (1 - fx) + (h11 - h10) * fx) / WCELL;
+  return { h, gx, gz };
+}
+
+/* ---- tilt: damped spring; the equilibrium surface tilts with the block ---- */
+const tilt = { rx: 0, rz: 0, vrx: 0, vrz: 0, trx: 0, trz: 0 };
+const tmpM = new THREE.Matrix4();
+
+function resetWater() {
+  for (let idx = 0; idx < WN * WN; idx++) { wH[idx] = params.tide; wV[idx] = 0; }
+  tilt.rx = tilt.rz = tilt.vrx = tilt.vrz = tilt.trx = tilt.trz = 0;
+  diorama.rotation.set(0, 0, 0);
+  wSimAcc = 0;
+}
+resetters.push(resetWater);
+
+/* ---- surface mesh ---- */
+const waterGeo = new THREE.BufferGeometry();
+{
+  const pos = new Float32Array(WN * WN * 3);
+  for (let j = 0; j < WN; j++) for (let i = 0; i < WN; i++) {
+    const idx = wIndex(i, j);
+    pos[idx * 3] = wX(i); pos[idx * 3 + 1] = wH[idx]; pos[idx * 3 + 2] = wZ(j);
+  }
+  waterGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const indices = [];
+  for (let j = 0; j < WN - 1; j++) for (let i = 0; i < WN - 1; i++) {
+    const a = wIndex(i, j), b = wIndex(i + 1, j), c = wIndex(i, j + 1), d = wIndex(i + 1, j + 1);
+    indices.push(a, c, b, b, c, d);
+  }
+  waterGeo.setIndex(indices);
+  waterGeo.computeVertexNormals();
+}
+
+function makeRippleNormalMap() {
+  const S = 256;
+  const cv = document.createElement('canvas');
+  cv.width = S; cv.height = S;
+  const ctx = cv.getContext('2d');
+  const img = ctx.createImageData(S, S);
+  const grid = 8;
+  const vals = [];
+  for (let gy = 0; gy <= grid; gy++) { vals[gy] = []; for (let gx = 0; gx <= grid; gx++) vals[gy][gx] = rng(); }
+  for (let gy = 0; gy <= grid; gy++) vals[gy][grid] = vals[gy][0];
+  for (let gx = 0; gx <= grid; gx++) vals[grid][gx] = vals[0][gx];
+  const hf = new Float32Array(S * S);
+  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+    const fx = x / S * grid, fy = y / S * grid;
+    const gx = Math.floor(fx), gy = Math.floor(fy);
+    const tx = fx - gx, ty = fy - gy;
+    const sx = tx * tx * (3 - 2 * tx), sy = ty * ty * (3 - 2 * ty);
+    hf[y * S + x] = vals[gy][gx] * (1 - sx) * (1 - sy) + vals[gy][gx + 1] * sx * (1 - sy)
+      + vals[gy + 1][gx] * (1 - sx) * sy + vals[gy + 1][gx + 1] * sx * sy;
+  }
+  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+    const xm = (x - 1 + S) % S, xp = (x + 1) % S, ym = (y - 1 + S) % S, yp = (y + 1) % S;
+    const dx = (hf[y * S + xp] - hf[y * S + xm]) * 2.0;
+    const dy = (hf[yp * S + x] - hf[ym * S + x]) * 2.0;
+    const inv = 1 / Math.sqrt(dx * dx + dy * dy + 1);
+    const o = (y * S + x) * 4;
+    img.data[o] = (-dx * inv * 0.5 + 0.5) * 255;
+    img.data[o + 1] = (inv * 0.5 + 0.5) * 255;
+    img.data[o + 2] = (-dy * inv * 0.5 + 0.5) * 255;
+    img.data[o + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(6, 6);
+  return tex;
+}
+
+const rippleTex = makeRippleNormalMap();
+const waterMat = new THREE.MeshPhysicalMaterial({
+  color: FLAVOURS[params.flavour].water,
+  metalness: 0, roughness: 0.08,
+  transmission: 1, ior: 1.33, thickness: 0.8,
+  attenuationColor: new THREE.Color(FLAVOURS[params.flavour].deep),
+  attenuationDistance: 1.2,
+  normalMap: rippleTex, normalScale: new THREE.Vector2(0.35, 0.35),
+});
+const waterMesh = new THREE.Mesh(waterGeo, waterMat);
+waterMesh.frustumCulled = false;
+diorama.add(waterMesh);
+
+/* ---- skirt + highlight lines around the perimeter ---- */
+const SKIRT_N = 101;
+function buildPerimeterColumns(offset) {
+  const cols = [];
+  for (let s = 0; s < 4; s++) {
+    for (let c = 0; c < SKIRT_N; c++) {
+      const u = c / (SKIRT_N - 1);
+      let x, z, i, j;
+      if (s === 0) { x = -5 + 10 * u; z = offset; i = Math.min(99, Math.max(0, Math.round((x + 5) / WCELL - 0.5))); j = 99; }
+      else if (s === 1) { x = offset; z = -5 + 10 * u; i = 99; j = Math.min(99, Math.max(0, Math.round((z + 5) / WCELL - 0.5))); }
+      else if (s === 2) { x = 5 - 10 * u; z = -offset; i = Math.min(99, Math.max(0, Math.round((x + 5) / WCELL - 0.5))); j = 0; }
+      else { x = -offset; z = 5 - 10 * u; i = 0; j = Math.min(99, Math.max(0, Math.round((z + 5) / WCELL - 0.5))); }
+      cols.push({ x, z, idx: wIndex(i, j) });
+    }
+  }
+  return cols;
+}
+function buildPerimeterStrip(cols) {
+  const pos = new Float32Array(cols.length * 2 * 3);
+  for (let k = 0; k < cols.length; k++) {
+    pos[(k * 2) * 3] = cols[k].x; pos[(k * 2) * 3 + 2] = cols[k].z;
+    pos[(k * 2 + 1) * 3] = cols[k].x; pos[(k * 2 + 1) * 3 + 2] = cols[k].z;
+  }
+  const idx = [];
+  for (let s = 0; s < 4; s++) {
+    for (let c = 0; c < SKIRT_N - 1; c++) {
+      const k = s * SKIRT_N + c;
+      const a = k * 2, b = k * 2 + 1, c2 = (k + 1) * 2, d = (k + 1) * 2 + 1;
+      idx.push(a, b, c2, b, d, c2);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setIndex(idx);
+  return { geo, pos };
+}
+const skirtCols = buildPerimeterColumns(4.97);
+const skirtStrip = buildPerimeterStrip(skirtCols);
+const skirtMat = new THREE.MeshPhysicalMaterial({
+  color: FLAVOURS[params.flavour].water,
+  metalness: 0, roughness: 0.1,
+  transmission: 1, ior: 1.33, thickness: 0.3,
+  attenuationColor: new THREE.Color(FLAVOURS[params.flavour].deep),
+  attenuationDistance: 1.0,
+  side: THREE.DoubleSide,
+});
+const skirtMesh = new THREE.Mesh(skirtStrip.geo, skirtMat);
+skirtMesh.frustumCulled = false;
+diorama.add(skirtMesh);
+
+const hiCols = buildPerimeterColumns(4.985);
+const hiStrip = buildPerimeterStrip(hiCols);
+const hiMat = new THREE.MeshBasicMaterial({
+  color: FLAVOURS[params.flavour].highlight, transparent: true, opacity: 0.9, side: THREE.DoubleSide,
+});
+const hiMesh = new THREE.Mesh(hiStrip.geo, hiMat);
+hiMesh.frustumCulled = false;
+diorama.add(hiMesh);
+
+function updatePerimeterStrip(strip, cols, bottomFn, topFn) {
+  const pos = strip.pos;
+  for (let k = 0; k < cols.length; k++) {
+    const h = wH[cols[k].idx];
+    pos[(k * 2) * 3 + 1] = bottomFn(h);
+    pos[(k * 2 + 1) * 3 + 1] = topFn(h);
+  }
+  strip.geo.attributes.position.needsUpdate = true;
+  strip.geo.computeVertexNormals();
+}
+
+flavourListeners.push((f) => {
+  waterMat.color.set(f.water);
+  waterMat.attenuationColor.set(f.deep);
+  skirtMat.color.set(f.water);
+  skirtMat.attenuationColor.set(f.deep);
+  hiMat.color.set(f.highlight);
+});
+
+/* ---- pointer: stir the water, tilt the block ---- */
+const raycaster = new THREE.Raycaster();
+const pointerNDC = new THREE.Vector2();
+let dragMode = null;
+let lastPointer = { x: 0, y: 0, t: 0 };
+let lastWaterLocal = null;
+
+function pointerToWaterLocal(e) {
+  pointerNDC.set((e.clientX / window.innerWidth) * 2 - 1, -(e.clientY / window.innerHeight) * 2 + 1);
+  raycaster.setFromCamera(pointerNDC, camera);
+  const hit = raycaster.intersectObject(waterMesh);
+  if (!hit.length) return null;
+  return diorama.worldToLocal(hit[0].point.clone());
+}
+function pointerHitsBlock(e) {
+  pointerNDC.set((e.clientX / window.innerWidth) * 2 - 1, -(e.clientY / window.innerHeight) * 2 + 1);
+  raycaster.setFromCamera(pointerNDC, camera);
+  const hits = raycaster.intersectObject(diorama, true);
+  for (const h of hits) {
+    if (h.object !== waterMesh && h.object !== skirtMesh && h.object !== hiMesh) return true;
+  }
+  return false;
+}
+
+window.addEventListener('pointerdown', (e) => {
+  if (e.target !== renderer.domElement) return;
+  const wp = pointerToWaterLocal(e);
+  if (wp && terrainHeight(wp.x, wp.z) <= params.tide) {
+    dragMode = 'stir';
+    lastWaterLocal = wp;
+    controls.enabled = false;
+  } else if (pointerHitsBlock(e)) {
+    dragMode = 'tilt';
+    controls.enabled = false;
+  }
+  lastPointer = { x: e.clientX, y: e.clientY, t: performance.now() };
+}, true);
+
+window.addEventListener('pointermove', (e) => {
+  if (dragMode === 'stir') {
+    const wp = pointerToWaterLocal(e);
+    if (wp && lastWaterLocal) {
+      const dx = wp.x - lastWaterLocal.x, dz = wp.z - lastWaterLocal.z;
+      const dt = Math.max(1, performance.now() - lastPointer.t) / 1000;
+      const speed = Math.hypot(dx, dz) / dt;
+      const steps = Math.max(1, Math.floor(Math.hypot(dx, dz) / 0.1));
+      for (let s = 0; s <= steps; s++) {
+        const px = lastWaterLocal.x + dx * (s / steps);
+        const pz = lastWaterLocal.z + dz * (s / steps);
+        disturb(px, pz, 0.45, 0, Math.min(0.5, speed * 0.02));
+      }
+      lastWaterLocal = wp;
+    }
+    lastPointer = { x: e.clientX, y: e.clientY, t: performance.now() };
+  } else if (dragMode === 'tilt') {
+    const dx = e.clientX - lastPointer.x, dy = e.clientY - lastPointer.y;
+    tilt.trz = THREE.MathUtils.clamp(tilt.trz - dx * 0.003, -0.13, 0.13);
+    tilt.trx = THREE.MathUtils.clamp(tilt.trx + dy * 0.003, -0.13, 0.13);
+    lastPointer = { x: e.clientX, y: e.clientY, t: performance.now() };
+  }
+});
+
+window.addEventListener('pointerup', () => {
+  if (dragMode === 'tilt') { tilt.trx = 0; tilt.trz = 0; }
+  dragMode = null;
+  controls.enabled = true;
+});
+
+/* ---- water ticker ---- */
+tickers.push((dt, t) => {
+  if (params.tide !== wLastTide) { recomputeLand(); wLastTide = params.tide; }
+
+  // Tilt spring.
+  const k = 18, c = 7;
+  tilt.vrx += (-k * (tilt.rx - tilt.trx) - c * tilt.vrx) * dt;
+  tilt.vrz += (-k * (tilt.rz - tilt.trz) - c * tilt.vrz) * dt;
+  tilt.rx = THREE.MathUtils.clamp(tilt.rx + tilt.vrx * dt, -0.15, 0.15);
+  tilt.rz = THREE.MathUtils.clamp(tilt.rz + tilt.vrz * dt, -0.15, 0.15);
+  diorama.rotation.x = tilt.rx;
+  diorama.rotation.z = tilt.rz;
+  tmpM.makeRotationFromEuler(diorama.rotation);
+  const el = tmpM.elements;
+  wEqA = -el[1] / el[5];
+  wEqB = -el[9] / el[5];
+  if (terrainShader) {
+    terrainShader.uniforms.uEqA.value = wEqA;
+    terrainShader.uniforms.uEqB.value = wEqB;
+  }
+
+  for (let j = 0; j < WN; j++) for (let i = 0; i < WN; i++) {
+    wEqArr[wIndex(i, j)] = params.tide + wEqA * wX(i) + wEqB * wZ(j);
+  }
+
+  wSimAcc += dt;
+  let guard = 0;
+  while (wSimAcc >= WSTEP && guard < 8) { stepWave(); wSimAcc -= WSTEP; guard++; }
+
+  // Surface mesh.
+  const pos = waterGeo.attributes.position;
+  for (let idx = 0; idx < WN * WN; idx++) pos.array[idx * 3 + 1] = wH[idx];
+  pos.needsUpdate = true;
+  waterGeo.computeVertexNormals();
+
+  // Skirt follows the water edge height; highlight lines ride its top.
+  updatePerimeterStrip(skirtStrip, skirtCols, () => -1.2, (h) => h + 0.01);
+  updatePerimeterStrip(hiStrip, hiCols, (h) => h, (h) => h + 0.03);
+
+  // Laplacian texture for terrain caustics + wave energy.
+  let energy = 0, count = 0;
+  const dx2 = WCELL * WCELL;
+  for (let j = 0; j < WN; j++) {
+    for (let i = 0; i < WN; i++) {
+      const idx = wIndex(i, j);
+      if (wLand[idx]) { lapData[idx] = 0.5; continue; }
+      const l = i > 0 ? wH[idx - 1] : wH[idx];
+      const r = i < WN - 1 ? wH[idx + 1] : wH[idx];
+      const u = j > 0 ? wH[idx - WN] : wH[idx];
+      const d = j < WN - 1 ? wH[idx + WN] : wH[idx];
+      const lap = (l + r + u + d - 4 * wH[idx]) / dx2;
+      lapData[idx] = Math.min(1, Math.max(0, 0.5 + lap * 0.08));
+      energy += wH[idx] * wH[idx];
+      count++;
+    }
+  }
+  lapTex.needsUpdate = true;
+  state.waveEnergy = count ? Math.min(2, (energy / count) * 30) : 0;
+
+  // Random drips keep the sea alive.
+  wDripTimer -= dt;
+  if (wDripTimer <= 0) {
+    wDripTimer = 0.7 + rng() * 0.8;
+    const x = (rng() * 2 - 1) * 4.5, z = (rng() * 2 - 1) * 4.5;
+    if (terrainHeight(x, z) <= params.tide) disturb(x, z, 0.35, 0.03, 0.05);
+  }
+
+  // Ripple normal map scrolls slowly.
+  rippleTex.offset.x += dt * 0.008;
+  rippleTex.offset.y += dt * 0.005;
 });
 
 /* ============================== UI ============================== */
